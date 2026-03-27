@@ -1,0 +1,151 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  background: #f5f5f5;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.markdown-preview {
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 4px;
+  line-height: 1.8;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3 {
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.markdown-preview p {
+  margin-bottom: 8px;
+}
+
+.markdown-preview code {
+  background: #f0f0f0;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.markdown-preview pre {
+  background: #f6f8fa;
+  padding: 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.markdown-preview pre code {
+  background: none;
+  padding: 0;
+}
+
+.markdown-preview blockquote {
+  border-left: 4px solid #ddd;
+  padding-left: 16px;
+  color: #666;
+  margin: 8px 0;
+}
+
+.markdown-preview ul,
+.markdown-preview ol {
+  padding-left: 24px;
+  margin-bottom: 8px;
+}
+
+.markdown-preview table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.markdown-preview th,
+.markdown-preview td {
+  border: 1px solid #ddd;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.markdown-preview th {
+  background: #f5f5f5;
+}
+
+/* Chat message markdown */
+.chat-markdown {
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+.chat-markdown p {
+  margin-bottom: 6px;
+}
+
+.chat-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4 {
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.chat-markdown code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.chat-markdown pre {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.chat-markdown pre code {
+  background: none;
+  padding: 0;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  padding-left: 20px;
+  margin: 4px 0;
+}
+
+.chat-markdown blockquote {
+  border-left: 3px solid #ddd;
+  padding-left: 12px;
+  color: #666;
+  margin: 4px 0;
+}
+
+.chat-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 6px 0;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid #ddd;
+  padding: 4px 8px;
+  text-align: left;
+  font-size: 0.9em;
+}
