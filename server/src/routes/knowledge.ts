@@ -1,8 +1,10 @@
+import { nanoid } from 'nanoid';
 import type { FastifyInstance } from 'fastify';
 import type { KnowledgeRepository } from '../db/knowledgeRepo';
 import type { KnowledgeService } from '../services/knowledgeService';
 import type { RagService } from '../services/ragService';
-import type { KnowledgeType } from '@pkb/shared';
+import type { KnowledgeType, SavePieceRequest } from '@pkb/shared';
+import { getDb, saveDb } from '../db/database';
 
 export async function knowledgeRoutes(
   app: FastifyInstance,
@@ -200,6 +202,190 @@ export async function knowledgeRoutes(
       return { success: true, data: result };
     } catch (error: any) {
       app.log.error(error, 'Failed to preview');
+      return reply.status(500).send({ error: error.message });
+    }
+  });
+
+  // Split-preview: split content and process each piece (preview only, no save)
+  app.post('/api/knowledge/split-preview', async (req, reply) => {
+    const body = req.body as {
+      raw_content: string;
+      type?: KnowledgeType;
+      model?: string;
+      temperature?: number;
+      top_p?: number;
+    };
+
+    if (!body.raw_content) {
+      return reply.status(400).send({ error: 'raw_content is required' });
+    }
+
+    try {
+      const options = { model: body.model, temperature: body.temperature, top_p: body.top_p };
+
+      // Step 1: Split into pieces
+      const rawPieces = await service.splitKnowledge(body.raw_content, options);
+
+      // Step 2: Process each piece to get structured results
+      const pieces = [];
+      for (const rawPiece of rawPieces) {
+        const pieceType = body.type || (rawPiece.suggested_type as KnowledgeType) || undefined;
+        const processing = await service.processTextInput(rawPiece.content, pieceType, options);
+        pieces.push({
+          id: nanoid(),
+          content: rawPiece.content,
+          suggested_type: rawPiece.suggested_type,
+          processing,
+        });
+      }
+
+      return { success: true, pieces };
+    } catch (error: any) {
+      app.log.error(error, 'Failed to split-preview');
+      return reply.status(500).send({ error: error.message });
+    }
+  });
+
+  // Save pieces: save split-preview results (merge or individually)
+  app.post('/api/knowledge/save-pieces', async (req, reply) => {
+    const body = req.body as {
+      pieces: SavePieceRequest[];
+      merge: boolean;
+    };
+
+    if (!body.pieces || !Array.isArray(body.pieces) || body.pieces.length === 0) {
+      return reply.status(400).send({ error: 'pieces array is required' });
+    }
+
+    try {
+      const items: any[] = [];
+
+      if (body.merge && body.pieces.length > 1) {
+        // Merge mode: combine all pieces into one item
+        const pieces = body.pieces;
+
+        // Union keywords (case-insensitive dedup)
+        const keywordSet = new Set<string>();
+        for (const p of pieces) {
+          for (const kw of (p.keywords || [])) {
+            const lower = kw.toLowerCase();
+            if (![...keywordSet].some(k => k.toLowerCase() === lower)) {
+              keywordSet.add(kw);
+            }
+          }
+        }
+        const mergedKeywords = [...keywordSet];
+
+        // Union tags (case-insensitive dedup)
+        const tagSet = new Set<string>();
+        for (const p of pieces) {
+          for (const tag of (p.tags || [])) {
+            const lower = tag.toLowerCase();
+            if (![...tagSet].some(t => t.toLowerCase() === lower)) {
+              tagSet.add(tag);
+            }
+          }
+        }
+        const mergedTags = [...tagSet];
+
+        // Merge raw_content
+        const mergedRawContent = pieces.map(p => p.raw_content).join('\n\n---\n\n');
+
+        // Use first piece's title or generate combined
+        const mergedTitle = pieces[0].title || pieces.map(p => p.title || p.raw_content.substring(0, 20)).join(' / ');
+
+        // Build merged content from processing results (each piece was already processed in preview)
+        const mergedContent = {
+          merged: true,
+          pieces: pieces.map(p => ({
+            title: p.title,
+            type: p.type,
+            keywords: p.keywords,
+            tags: p.tags,
+          })),
+        };
+
+        const db = await getDb();
+        const itemId = nanoid();
+        const now = new Date().toISOString();
+
+        const item: any = {
+          id: itemId,
+          title: mergedTitle,
+          content: JSON.stringify(mergedContent),
+          raw_content: mergedRawContent,
+          type: pieces[0].type || 'general',
+          tags: JSON.stringify(mergedTags),
+          category: pieces[0].category || null,
+          source_file: null,
+          created_at: now,
+          updated_at: now,
+        };
+
+        db.run(
+          'INSERT INTO knowledge_items (id, title, content, raw_content, type, tags, category, source_file, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [item.id, item.title, item.content, item.raw_content, item.type, item.tags, item.category, item.source_file, item.created_at, item.updated_at],
+        );
+
+        // Sync clustering features
+        db.run(
+          'INSERT OR REPLACE INTO clustering_features (item_id, keywords, tags, category, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+          [itemId, JSON.stringify(mergedKeywords), JSON.stringify(mergedTags), item.category],
+        );
+        saveDb();
+
+        items.push({ ...item, tags: mergedTags });
+
+        // Embed (non-blocking)
+        const embedText = mergedTitle + ' ' + mergedTags.join(' ');
+        ragService.embedAndStore(itemId, embedText).catch(() => {});
+
+      } else {
+        // Save each piece independently
+        const db = await getDb();
+
+        for (const piece of body.pieces) {
+          const itemId = nanoid();
+          const now = new Date().toISOString();
+          const pieceType = piece.type || 'general';
+
+          const item: any = {
+            id: itemId,
+            title: piece.title || piece.raw_content.substring(0, 50),
+            content: JSON.stringify({ raw: piece.raw_content, keywords: piece.keywords, tags: piece.tags }),
+            raw_content: piece.raw_content,
+            type: pieceType,
+            tags: JSON.stringify(piece.tags || []),
+            category: piece.category || null,
+            source_file: null,
+            created_at: now,
+            updated_at: now,
+          };
+
+          db.run(
+            'INSERT INTO knowledge_items (id, title, content, raw_content, type, tags, category, source_file, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [item.id, item.title, item.content, item.raw_content, item.type, item.tags, item.category, item.source_file, item.created_at, item.updated_at],
+          );
+
+          // Sync clustering features
+          db.run(
+            'INSERT OR REPLACE INTO clustering_features (item_id, keywords, tags, category, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
+            [itemId, JSON.stringify(piece.keywords || []), JSON.stringify(piece.tags || []), item.category],
+          );
+
+          items.push({ ...item, tags: piece.tags || [] });
+
+          // Embed (non-blocking)
+          const embedText = item.title + ' ' + (piece.tags || []).join(' ');
+          ragService.embedAndStore(itemId, embedText).catch(() => {});
+        }
+
+        saveDb();
+      }
+
+      return { success: true, saved_count: items.length, items };
+    } catch (error: any) {
+      app.log.error(error, 'Failed to save pieces');
       return reply.status(500).send({ error: error.message });
     }
   });

@@ -21,9 +21,13 @@ const BUILT_IN_TEMPLATES: Array<Omit<PromptTemplate, 'created_at'>> = [
     {"word": "重点字词", "meaning": "释义"}
   ],
   "summary": "简要赏析",
-  "keywords": ["核心概念1", "核心概念2", "核心概念3", "核心概念4", "核心概念5"],
-  "tags": ["标签1", "标签2"]
-}`,
+  "keywords": ["关键词1", "关键词2", ...],
+  "tags": ["标签1", "标签2", ...]
+}
+
+说明：
+- keywords: 根据内容提取适当数量的关键词（通常3-10个），涵盖核心概念、人物、事件
+- tags: 2-5个相关标签`,
   },
   {
     id: 'builtin-idiom',
@@ -44,9 +48,13 @@ const BUILT_IN_TEMPLATES: Array<Omit<PromptTemplate, 'created_at'>> = [
   "examples": ["正确的使用示例1", "正确的使用示例2"],
   "synonyms": ["近义成语"],
   "antonyms": ["反义成语"],
-  "keywords": ["核心概念1", "核心概念2", "核心概念3", "核心概念4", "核心概念5"],
-  "tags": ["标签1", "标签2"]
-}`,
+  "keywords": ["关键词1", "关键词2", ...],
+  "tags": ["标签1", "标签2", ...]
+}
+
+说明：
+- keywords: 根据内容提取适当数量的关键词（通常3-8个）
+- tags: 2-5个相关标签`,
   },
   {
     id: 'builtin-poetry',
@@ -67,9 +75,13 @@ const BUILT_IN_TEMPLATES: Array<Omit<PromptTemplate, 'created_at'>> = [
   "background": "创作背景",
   "appreciation": "逐句赏析",
   "theme": "主题思想",
-  "keywords": ["核心意象1", "核心意象2", "核心主题1", "核心主题2", "核心主题3"],
-  "tags": ["标签1", "标签2"]
-}`,
+  "keywords": ["关键词1", "关键词2", ...],
+  "tags": ["标签1", "标签2", ...]
+}
+
+说明：
+- keywords: 根据内容提取适当数量的关键词和核心意象（通常3-10个）
+- tags: 2-5个相关标签`,
   },
   {
     id: 'builtin-general',
@@ -81,15 +93,19 @@ const BUILT_IN_TEMPLATES: Array<Omit<PromptTemplate, 'created_at'>> = [
 内容：
 {{raw_content}}
 
-请返回以下 JSON（不要包含 markdown 代码块标记）。关键词请尽量提取 8-15 个，涵盖核心概念、人物、地点、事件、术语等：
+请返回以下 JSON（不要包含 markdown 代码块标记）：
 {
   "title": "标题（简明概括）",
   "original_text": "原文内容（完整保留原始文本，包括 markdown 格式）",
   "summary": "摘要（不超过200字）",
-  "keywords": ["关键词1", "关键词2", "关键词3", "关键词4", "关键词5", "关键词6", "关键词7", "关键词8"],
+  "keywords": ["关键词1", "关键词2", ...],
   "category": "分类",
-  "tags": ["标签1", "标签2"]
-}`,
+  "tags": ["标签1", "标签2", ...]
+}
+
+说明：
+- keywords: 根据内容丰富程度提取适当数量的关键词（通常5-20个），内容越丰富数量越多，涵盖核心概念、人物、地点、事件、术语等
+- tags: 2-5个相关标签`,
   },
 ];
 

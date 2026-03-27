@@ -51,6 +51,18 @@ export const knowledgeApi = {
       body: JSON.stringify(data),
     }),
 
+  splitPreview: (data: { raw_content: string; type?: string; model?: string; temperature?: number; top_p?: number }) =>
+    request<any>('/knowledge/split-preview', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  savePieces: (data: { pieces: Array<{ raw_content: string; title?: string; type?: string; keywords: string[]; tags: string[]; category?: string }>; merge: boolean }) =>
+    request<any>('/knowledge/save-pieces', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   upload: async (file: File, type?: string) => {
     const formData = new FormData();
     formData.append('file', file);

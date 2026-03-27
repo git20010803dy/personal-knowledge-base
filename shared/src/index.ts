@@ -256,6 +256,23 @@ export interface DailyTokenStats {
   }>;
 }
 
+// Split-merge types
+export interface SplitPiece {
+  id: string;
+  content: string;
+  suggested_type?: string;
+  processing: ProcessingResult;
+}
+
+export interface SavePieceRequest {
+  raw_content: string;
+  title?: string;
+  type?: string;
+  keywords: string[];
+  tags: string[];
+  category?: string;
+}
+
 // Clustering types
 export interface ClusteringParams {
   keywordWeight: number;
