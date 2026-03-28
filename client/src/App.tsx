@@ -1,5 +1,5 @@
-import { Layout, Menu } from 'antd';
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { Layout, Menu } from "antd";
+import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import {
   BookOutlined,
   FormOutlined,
@@ -10,58 +10,58 @@ import {
   RobotOutlined,
   ReadOutlined,
   PieChartOutlined,
-} from '@ant-design/icons';
-import KnowledgeInput from './pages/KnowledgeInput';
-import KnowledgeList from './pages/KnowledgeList';
-import KnowledgeGraph from './pages/KnowledgeGraph';
-import TemplateManagement from './pages/TemplateManagement';
-import ProviderManagement from './pages/ProviderManagement';
-import AgentChat from './pages/AgentChat';
-import Review from './pages/Review';
-import TokenUsage from './pages/TokenUsage';
+} from "@ant-design/icons";
+import KnowledgeInput from "./pages/KnowledgeInput";
+import KnowledgeList from "./pages/KnowledgeList";
+import KnowledgeGraph from "./pages/KnowledgeGraph";
+import TemplateManagement from "./pages/TemplateManagement";
+import ProviderManagement from "./pages/ProviderManagement";
+import AgentChat from "./pages/AgentChat";
+import Review from "./pages/Review";
+import TokenUsage from "./pages/TokenUsage";
 
 const { Header, Sider, Content } = Layout;
 
 const menuItems = [
   {
-    key: '/input',
+    key: "/input",
     icon: <FormOutlined />,
-    label: '知识输入',
+    label: "知识输入",
   },
   {
-    key: '/list',
+    key: "/list",
     icon: <UnorderedListOutlined />,
-    label: '知识列表',
+    label: "知识列表",
   },
   {
-    key: '/graph',
+    key: "/graph",
     icon: <NodeIndexOutlined />,
-    label: '知识图谱',
+    label: "知识图谱",
   },
   {
-    key: '/chat',
+    key: "/chat",
     icon: <RobotOutlined />,
-    label: 'AI 问答',
+    label: "AI 问答",
   },
   {
-    key: '/review',
+    key: "/review",
     icon: <ReadOutlined />,
-    label: '复习',
+    label: "复习",
   },
   {
-    key: '/templates',
+    key: "/templates",
     icon: <AppstoreOutlined />,
-    label: '模板管理',
+    label: "模板管理",
   },
   {
-    key: '/providers',
+    key: "/providers",
     icon: <SettingOutlined />,
-    label: '模型配置',
+    label: "模型配置",
   },
   {
-    key: '/tokens',
+    key: "/tokens",
     icon: <PieChartOutlined />,
-    label: 'Token 统计',
+    label: "Token 统计",
   },
 ];
 
@@ -70,32 +70,38 @@ export default function App() {
   const location = useLocation();
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout style={{ minHeight: "100vh" }}>
       <Header
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          background: '#001529',
-          padding: '0 24px',
+          display: "flex",
+          alignItems: "center",
+          background: "#001529",
+          padding: "0 24px",
         }}
       >
-        <BookOutlined style={{ fontSize: 24, color: '#fff', marginRight: 12 }} />
-        <span style={{ color: '#fff', fontSize: 18, fontWeight: 600 }}>个人知识库</span>
+        <BookOutlined
+          style={{ fontSize: 24, color: "#fff", marginRight: 12 }}
+        />
+        <span style={{ color: "#fff", fontSize: 18, fontWeight: 600 }}>
+          个人知识库
+        </span>
       </Header>
       <Layout>
-        <Sider width={200} style={{ background: '#fff' }}>
+        <Sider width={200} style={{ background: "#fff" }}>
           <Menu
             mode="inline"
-            selectedKeys={[location.pathname === '/' ? '/input' : location.pathname]}
+            selectedKeys={[
+              location.pathname === "/" ? "/input" : location.pathname,
+            ]}
             items={menuItems}
             onClick={({ key }) => navigate(key)}
-            style={{ height: '100%', borderRight: 0 }}
+            style={{ height: "100%", borderRight: 0 }}
           />
         </Sider>
-        <Layout style={{ padding: '24px' }}>
+        <Layout style={{ padding: "24px" }}>
           <Content
             style={{
-              background: '#fff',
+              background: "#fff",
               padding: 24,
               margin: 0,
               borderRadius: 8,

@@ -6,16 +6,11 @@ import type { ActiveProviderInfo } from './llm';
 import { getActiveProvider } from '../db/providerRepo';
 import { getBuiltInTemplates, detectType, renderTemplate, parseJsonResponse } from './promptEngine';
 import { config } from '../config';
-import type {
-  KnowledgeItem,
-  KnowledgeType,
-  ProcessingResult,
-  UploadedFile,
-  KnowledgeLink,
-} from '@pkb/shared';
+import type { KnowledgeItem, KnowledgeType, ProcessingResult, UploadedFile, KnowledgeLink } from '@pkb/shared';
 import type { KnowledgeRepository } from '../db/knowledgeRepo';
 import type { TemplateRepository } from '../db/templateRepo';
 import { getDb, saveDb } from '../db/database';
+import { generateAndStoreQuestions } from './reviewQuestionService';
 
 const RELATION_TYPES = ['相关', '包含', '因果', '对比', '同源'] as const;
 
@@ -210,6 +205,11 @@ suggested_type 可选值：classical_chinese, idiom, poetry, general。如果不
     } catch (e) {
       console.error('Failed to sync clustering features:', e);
     }
+
+    // Pre-generate review questions (async, non-blocking)
+    generateAndStoreQuestions(created).catch((e) => {
+      console.error('Failed to generate review questions:', e);
+    });
 
     return { item: created, processingResult };
   }

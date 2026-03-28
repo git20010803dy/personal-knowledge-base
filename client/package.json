@@ -12,15 +12,16 @@
     "@ant-design/icons": "^5.3.7",
     "@pkb/shared": "workspace:*",
     "antd": "^5.18.0",
-    "cytoscape": "^3.33.1",
+    "axios": "^1.14.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
     "react-router-dom": "^6.23.1",
-    "remark-gfm": "^4.0.0"
+    "remark-gfm": "^4.0.0",
+    "vis-data": "^8.0.3",
+    "vis-network": "^10.0.2"
   },
   "devDependencies": {
-    "@types/cytoscape": "^3.31.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",

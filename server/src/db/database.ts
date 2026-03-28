@@ -78,6 +78,7 @@ function initTables(db: Database): void {
     CREATE TABLE IF NOT EXISTS review_records (
       id TEXT PRIMARY KEY,
       item_id TEXT NOT NULL,
+      question_id TEXT,
       question TEXT NOT NULL,
       answer TEXT,
       user_answer TEXT,
@@ -86,6 +87,20 @@ function initTables(db: Database): void {
       next_review DATETIME,
       interval_days REAL DEFAULT 1,
       review_count INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (item_id) REFERENCES knowledge_items(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS review_questions (
+      id TEXT PRIMARY KEY,
+      item_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      options TEXT NOT NULL,
+      correct_idx INTEGER NOT NULL,
+      explanation TEXT,
+      category TEXT DEFAULT '其他',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (item_id) REFERENCES knowledge_items(id) ON DELETE CASCADE
     )
@@ -127,7 +142,7 @@ function runMigrations(db: Database): void {
   const res = db.exec('SELECT MAX(version) as v FROM schema_migrations');
   const currentVersion = res.length > 0 && res[0].values[0][0] ? (res[0].values[0][0] as number) : 0;
 
-  const migrations: Array<{ version: number; sql: string }> = [
+  const migrations: Array<{ version: number; sql: string; extra?: (db: Database) => void }> = [
     {
       version: 1,
       sql: `
@@ -204,11 +219,22 @@ function runMigrations(db: Database): void {
         CREATE INDEX IF NOT EXISTS idx_token_usage_model ON token_usage(model);
       `,
     },
+    {
+      version: 5,
+      sql: `
+        -- review_questions table created in initTables
+        -- Add category column for existing installs
+      `,
+      extra: (db: Database) => {
+        try { db.run("ALTER TABLE review_questions ADD COLUMN category TEXT DEFAULT '其他'"); } catch {}
+      },
+    },
   ];
 
   for (const m of migrations) {
     if (m.version > currentVersion) {
       db.run(m.sql);
+      if (m.extra) m.extra(db);
       db.run('INSERT INTO schema_migrations (version) VALUES (?)', [m.version]);
     }
   }

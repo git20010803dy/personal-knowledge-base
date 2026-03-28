@@ -15,6 +15,8 @@ const BUILT_IN_TEMPLATES: Array<Omit<PromptTemplate, 'created_at'>> = [
 请返回以下 JSON（不要包含 markdown 代码块标记）：
 {
   "title": "文章标题",
+  "author": "作者姓名（如能从内容推断）",
+  "dynasty": "朝代（如能推断）",
   "original_text": "校对后的原文",
   "translation": "白话文翻译",
   "annotations": [
@@ -26,7 +28,7 @@ const BUILT_IN_TEMPLATES: Array<Omit<PromptTemplate, 'created_at'>> = [
 }
 
 说明：
-- keywords: 根据内容提取适当数量的关键词（通常3-10个），涵盖核心概念、人物、事件
+- keywords: 根据内容提取适当数量的关键词（通常3-10个），涵盖核心概念、人物、事件。**如果能识别出作者，作者名必须包含在 keywords 中**
 - tags: 2-5个相关标签`,
   },
   {
@@ -68,9 +70,10 @@ const BUILT_IN_TEMPLATES: Array<Omit<PromptTemplate, 'created_at'>> = [
 
 请返回以下 JSON（不要包含 markdown 代码块标记）：
 {
-  "title": "诗题",
+  "title": "诗题/词题",
   "author": "作者",
   "dynasty": "朝代",
+  "ci_pattern_name": "词牌名（仅词需要，诗则留空字符串）",
   "original_text": "原文",
   "background": "创作背景",
   "appreciation": "逐句赏析",
@@ -80,7 +83,8 @@ const BUILT_IN_TEMPLATES: Array<Omit<PromptTemplate, 'created_at'>> = [
 }
 
 说明：
-- keywords: 根据内容提取适当数量的关键词和核心意象（通常3-10个）
+- ci_pattern_name: 如果是词（如《水调歌头》《念奴娇》《浣溪沙》等），填写词牌名；如果是诗，填空字符串 ""
+- keywords: 根据内容提取适当数量的关键词和核心意象（通常3-10个）。**作者名必须包含在 keywords 中；如果有词牌名，词牌名也必须包含在 keywords 中**
 - tags: 2-5个相关标签`,
   },
   {

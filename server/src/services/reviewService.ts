@@ -1,23 +1,26 @@
+/**
+ * reviewService.ts - 复习核心逻辑
+ * 功能：SM-2间隔计算、从预生成题库读题、提交判分
+ * 依赖：reviewQuestionService, database
+ * 最后修改：2026-03-28 - 改为按固定 category 筛选，从 review_questions 表读题
+ */
 import { nanoid } from 'nanoid';
 import { getDb, saveDb } from '../db/database';
-import { getActiveLLMProvider, recordTokenUsage } from './llm/index';
-import type { ActiveProviderInfo } from './llm/index';
-import type { LLMProvider } from './llm/provider';
-import type { KnowledgeItem, ReviewQuestion, ReviewItem, ReviewStats } from '@pkb/shared';
+import type { ReviewStats } from '@pkb/shared';
+import type { PreGeneratedQuestion, ReviewCategory } from './reviewQuestionService';
 
 // ─── SM-2 Spaced Repetition ───────────────────────────────────────────
 
 export function calculateNextReview(
   isCorrect: boolean,
   currentInterval: number,
-  reviewCount: number,
 ): { interval: number; nextReview: string } {
   let interval: number;
 
   if (isCorrect) {
     interval = Math.min(currentInterval * 2.5, 365);
   } else {
-    interval = 1; // reset to 1 day
+    interval = 1;
   }
 
   const nextReview = new Date();
@@ -27,248 +30,132 @@ export function calculateNextReview(
   return { interval, nextReview: nextReview.toISOString() };
 }
 
-// ─── Question Generation ──────────────────────────────────────────────
+// ─── Get due item IDs ────────────────────────────────────────────────
 
-function getQuestionPrompt(item: KnowledgeItem): string {
-  const typeMap: Record<string, string> = {
-    classical_chinese: '文言文',
-    idiom: '成语',
-    poetry: '诗词',
-    general: '通用知识',
-  };
-  const typeName = typeMap[item.type] || '通用知识';
-
-  let contentSummary = item.raw_content || item.title;
-  try {
-    if (item.content) {
-      const parsed = JSON.parse(item.content);
-      contentSummary = JSON.stringify(parsed, null, 2);
-    }
-  } catch {
-    contentSummary = item.content || item.raw_content || item.title;
-  }
-
-  return `你是一位知识复习出题专家。请根据以下${typeName}知识点，生成 3-5 道复习题目。
-
-知识点标题：${item.title}
-类型：${typeName}
-内容：
-${contentSummary}
-
-出题要求：
-- 文言文：出翻译题和字词解释题
-- 成语：出填空题和选择释义题
-- 诗词：出默写题和赏析问答题
-- 通用知识：出关键词匹配题和简答题
-
-每道题必须包含以下字段：
-- type: 题目类型，只能是 "choice"（选择题）、"fill"（填空题）、"essay"（简答题）之一
-- question: 题目文字
-- answer: 正确答案
-- options: 如果是选择题，提供 4 个选项（数组），其中一个是正确答案
-
-请严格按照以下 JSON 格式返回，不要添加任何其他文字：
-[
-  {
-    "type": "choice",
-    "question": "...",
-    "answer": "...",
-    "options": ["A...", "B...", "C...", "D..."]
-  }
-]`;
-}
-
-async function generateQuestionsForItem(
-  info: ActiveProviderInfo,
-  item: KnowledgeItem,
-): Promise<ReviewQuestion[]> {
-  const llm = info.provider;
-  const prompt = getQuestionPrompt(item);
-  const response = await llm.chat([
-    { role: 'system', content: '你是出题助手，只输出 JSON 数组。' },
-    { role: 'user', content: prompt },
-  ], { temperature: 0.7 });
-
-  // Record token usage
-  if (response.usage) {
-    recordTokenUsage({
-      model: info.model,
-      provider_name: info.providerName,
-      prompt_tokens: response.usage.promptTokens,
-      completion_tokens: response.usage.completionTokens,
-      total_tokens: response.usage.totalTokens,
-      call_type: 'review',
-    });
-  }
-
-  // Parse JSON from response
-  let text = response.content.trim();
-  // Strip markdown code fences if present
-  if (text.startsWith('```')) {
-    text = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
-  }
-
-  try {
-    const questions = JSON.parse(text);
-    if (Array.isArray(questions)) {
-      return questions.slice(0, 5).map((q) => ({
-        question: q.question || '',
-        answer: q.answer || '',
-        type: q.type || 'essay',
-        options: q.options || undefined,
-      }));
-    }
-  } catch {
-    // fallback: generate simple questions manually
-  }
-
-  // Fallback: simple questions if LLM output fails to parse
-  return [
-    {
-      question: `请简要说明「${item.title}」的含义。`,
-      answer: item.raw_content?.slice(0, 200) || '见知识库原文',
-      type: 'essay' as const,
-    },
-  ];
-}
-
-export async function generateQuestions(item: KnowledgeItem): Promise<ReviewQuestion[]> {
-  const info = await getActiveLLMProvider();
-  return generateQuestionsForItem(info, item);
-}
-
-// ─── Review Workflow ──────────────────────────────────────────────────
-
-export async function getDueItems(count: number = 10): Promise<KnowledgeItem[]> {
+export async function getDueItems(
+  count: number = 10,
+  category?: string,
+): Promise<string[]> {
   const db = await getDb();
-  const now = new Date().toISOString();
 
-  // Items due for review: have a review_record with next_review <= now
-  // Also include items that have NEVER been reviewed
-  const res = db.exec(
-    `SELECT ki.* FROM knowledge_items ki
-     LEFT JOIN (
-       SELECT item_id, MIN(next_review) as min_next
-       FROM review_records
-       GROUP BY item_id
-     ) rr ON ki.id = rr.item_id
-     WHERE rr.min_next IS NULL OR rr.min_next <= ?
-     ORDER BY COALESCE(rr.min_next, ki.created_at) ASC
-     LIMIT ?`,
-    [now, count],
-  );
+  let sql = `
+    SELECT DISTINCT rq.item_id FROM review_questions rq
+    LEFT JOIN (
+      SELECT item_id, MAX(next_review) as max_next
+      FROM review_records
+      WHERE user_answer IS NOT NULL
+      GROUP BY item_id
+    ) rr ON rq.item_id = rr.item_id
+    WHERE (rr.max_next IS NULL OR rr.max_next <= datetime('now'))
+  `;
+  const params: any[] = [];
 
+  if (category && category !== '全部') {
+    sql += ` AND rq.category = ?`;
+    params.push(category);
+  }
+
+  sql += ` ORDER BY COALESCE(rr.max_next, rq.created_at) ASC LIMIT ?`;
+  params.push(count);
+
+  const res = db.exec(sql, params);
   if (res.length === 0) return [];
 
-  return res[0].values.map((row) => ({
-    id: row[0] as string,
-    title: row[1] as string,
-    content: row[2] as string,
-    raw_content: row[3] as string,
-    type: row[4] as any,
-    tags: JSON.parse((row[5] as string) || '[]'),
-    category: row[6] as string | null,
-    source_file: row[7] as string | null,
-    created_at: row[8] as string,
-    updated_at: row[9] as string,
-  }));
+  return [...new Set(res[0].values.map((row) => row[0] as string))];
 }
 
-export async function startReview(count: number = 10): Promise<ReviewItem[]> {
-  const items = await getDueItems(count);
-  if (items.length === 0) return [];
+// ─── Start review ────────────────────────────────────────────────────
 
-  const llm = await getActiveLLMProvider();
+export interface ReviewSessionItem {
+  item_id: string;
+  item_title: string;
+  questions: PreGeneratedQuestion[];
+}
+
+export async function startReview(
+  count: number = 10,
+  category?: string,
+): Promise<ReviewSessionItem[]> {
   const db = await getDb();
-  const reviewItems: ReviewItem[] = [];
+  const itemIds = await getDueItems(count, category);
+  if (itemIds.length === 0) return [];
 
-  for (const item of items) {
-    let questions: ReviewQuestion[];
-    try {
-      questions = await generateQuestionsForItem(llm, item);
-    } catch {
-      // Fallback if LLM fails
-      questions = [
-        {
-          question: `请简要说明「${item.title}」的含义。`,
-          answer: item.raw_content?.slice(0, 200) || '见知识库原文',
-          type: 'essay' as const,
-        },
-      ];
+  const results: ReviewSessionItem[] = [];
+
+  for (const itemId of itemIds) {
+    const itemRes = db.exec('SELECT title FROM knowledge_items WHERE id = ?', [itemId]);
+    if (itemRes.length === 0 || itemRes[0].values.length === 0) continue;
+    const itemTitle = itemRes[0].values[0][0] as string;
+
+    let qSql = 'SELECT id, item_id, question, options, correct_idx, explanation, category FROM review_questions WHERE item_id = ?';
+    const qParams: any[] = [itemId];
+
+    if (category && category !== '全部') {
+      qSql += ' AND category = ?';
+      qParams.push(category);
     }
 
-    // Store each question as a review_record
-    for (const q of questions) {
-      const id = nanoid();
-      db.run(
-        `INSERT INTO review_records (id, item_id, question, answer, next_review, interval_days, review_count)
-         VALUES (?, ?, ?, ?, ?, 1, 0)`,
-        [id, item.id, q.question, q.answer, new Date().toISOString()],
-      );
-    }
-    saveDb();
+    const qRes = db.exec(qSql, qParams);
+    if (qRes.length === 0 || qRes[0].values.length === 0) continue;
 
-    reviewItems.push({
-      item_id: item.id,
-      item_title: item.title,
-      questions,
-    });
+    const questions: PreGeneratedQuestion[] = qRes[0].values.map((row) => ({
+      id: row[0] as string,
+      item_id: row[1] as string,
+      question: row[2] as string,
+      options: JSON.parse(row[3] as string),
+      correct_idx: row[4] as number,
+      explanation: row[5] as string,
+      category: (row[6] as ReviewCategory) || '其他',
+    }));
+
+    results.push({ item_id: itemId, item_title: itemTitle, questions });
   }
 
-  return reviewItems;
+  return results;
 }
+
+// ─── Submit answer ───────────────────────────────────────────────────
 
 export async function submitAnswer(
-  reviewId: string,
-  userAnswer: string,
-): Promise<{ correct: boolean; correct_answer: string; explanation: string; next_review: string }> {
+  questionId: string,
+  itemId: string,
+  selectedIdx: number,
+): Promise<{ correct: boolean; correct_idx: number; explanation: string; next_review: string }> {
   const db = await getDb();
-  const res = db.exec('SELECT * FROM review_records WHERE id = ?', [reviewId]);
 
-  if (res.length === 0 || res[0].values.length === 0) {
-    throw new Error('Review record not found');
+  const qRes = db.exec(
+    'SELECT correct_idx, explanation FROM review_questions WHERE id = ?',
+    [questionId],
+  );
+
+  if (qRes.length === 0 || qRes[0].values.length === 0) {
+    throw new Error('Question not found');
   }
 
-  const row = res[0].values[0];
-  const correctAnswer = (row[3] as string) || '';
-  const currentInterval = (row[8] as number) || 1;
-  const reviewCount = (row[9] as number) || 0;
+  const correctIdx = qRes[0].values[0][0] as number;
+  const explanation = (qRes[0].values[0][1] as string) || '';
+  const isCorrect = selectedIdx === correctIdx;
 
-  // Simple answer matching: normalize whitespace and case
-  const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, '');
-  const isCorrect = normalize(userAnswer) === normalize(correctAnswer);
+  const rrRes = db.exec(
+    'SELECT interval_days FROM review_records WHERE item_id = ? ORDER BY created_at DESC LIMIT 1',
+    [itemId],
+  );
+  const currentInterval =
+    rrRes.length > 0 && rrRes[0].values.length > 0
+      ? (rrRes[0].values[0][0] as number) || 1
+      : 1;
 
-  // Or for essay type: if user answer contains key parts of correct answer (>30% overlap)
-  const question = row[2] as string;
-  let correct = isCorrect;
-  if (!correct && correctAnswer.length > 10) {
-    // Check if it's an essay - be more lenient
-    const userWords = new Set(userAnswer.replace(/[，。、！？：；""''（）\s]/g, '').split(''));
-    const correctWords = new Set(correctAnswer.replace(/[，。、！？：；""''（）\s]/g, '').split(''));
-    let overlap = 0;
-    for (const w of userWords) {
-      if (correctWords.has(w)) overlap++;
-    }
-    const ratio = correctWords.size > 0 ? overlap / correctWords.size : 0;
-    if (ratio > 0.3) correct = true;
-  }
+  const { interval, nextReview } = calculateNextReview(isCorrect, currentInterval);
 
-  const { interval, nextReview } = calculateNextReview(correct, currentInterval, reviewCount);
-
-  // Update review record
+  const recordId = nanoid();
   db.run(
-    `UPDATE review_records SET user_answer = ?, is_correct = ?, score = ?, next_review = ?, interval_days = ?, review_count = review_count + 1
-     WHERE id = ?`,
-    [userAnswer, correct ? 1 : 0, correct ? 100 : 0, nextReview, interval, reviewId],
+    `INSERT INTO review_records (id, item_id, question_id, question, answer, user_answer, is_correct, score, next_review, interval_days, review_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+    [recordId, itemId, questionId, '', String(correctIdx), String(selectedIdx), isCorrect ? 1 : 0, isCorrect ? 100 : 0, nextReview, interval],
   );
   saveDb();
 
-  return {
-    correct,
-    correct_answer: correctAnswer,
-    explanation: correct ? '回答正确！间隔已延长。' : '回答有误，下次复习间隔已重置为 1 天。',
-    next_review: nextReview,
-  };
+  return { correct: isCorrect, correct_idx: correctIdx, explanation, next_review: nextReview };
 }
 
 // ─── Review Stats ─────────────────────────────────────────────────────
@@ -279,36 +166,30 @@ export async function getTodayStats(): Promise<ReviewStats> {
   today.setHours(0, 0, 0, 0);
   const todayStr = today.toISOString();
 
-  // Due count: items where next_review <= now (or never reviewed)
   const dueRes = db.exec(
-    `SELECT COUNT(DISTINCT ki.id) FROM knowledge_items ki
+    `SELECT COUNT(DISTINCT rq.item_id) FROM review_questions rq
      LEFT JOIN (
-       SELECT item_id, MIN(next_review) as min_next
-       FROM review_records
+       SELECT item_id, MAX(next_review) as max_next
+       FROM review_records WHERE user_answer IS NOT NULL
        GROUP BY item_id
-     ) rr ON ki.id = rr.item_id
-     WHERE rr.min_next IS NULL OR rr.min_next <= datetime('now')`,
+     ) rr ON rq.item_id = rr.item_id
+     WHERE rr.max_next IS NULL OR rr.max_next <= datetime('now')`,
   );
   const dueCount = dueRes.length > 0 ? (dueRes[0].values[0][0] as number) : 0;
 
-  // Completed today
   const completedRes = db.exec(
-    `SELECT COUNT(*) FROM review_records
-     WHERE created_at >= ? AND user_answer IS NOT NULL`,
+    'SELECT COUNT(*) FROM review_records WHERE created_at >= ? AND user_answer IS NOT NULL',
     [todayStr],
   );
   const completedToday = completedRes.length > 0 ? (completedRes[0].values[0][0] as number) : 0;
 
-  // Accuracy rate (today)
   const correctRes = db.exec(
-    `SELECT COUNT(*) FROM review_records
-     WHERE created_at >= ? AND is_correct = 1`,
+    'SELECT COUNT(*) FROM review_records WHERE created_at >= ? AND is_correct = 1',
     [todayStr],
   );
   const correctCount = correctRes.length > 0 ? (correctRes[0].values[0][0] as number) : 0;
   const accuracyRate = completedToday > 0 ? Math.round((correctCount / completedToday) * 100) : 0;
 
-  // Streak: count consecutive days with at least 1 review
   let streak = 0;
   const checkDate = new Date(today);
   for (let i = 0; i < 365; i++) {
@@ -318,16 +199,13 @@ export async function getTodayStats(): Promise<ReviewStats> {
     dayEnd.setHours(23, 59, 59, 999);
 
     const dayRes = db.exec(
-      `SELECT COUNT(*) FROM review_records
-       WHERE user_answer IS NOT NULL AND created_at >= ? AND created_at <= ?`,
+      'SELECT COUNT(*) FROM review_records WHERE user_answer IS NOT NULL AND created_at >= ? AND created_at <= ?',
       [dayStart.toISOString(), dayEnd.toISOString()],
     );
     const dayCount = dayRes.length > 0 ? (dayRes[0].values[0][0] as number) : 0;
 
     if (dayCount > 0) {
       streak++;
-    } else if (streak > 0) {
-      break;
     } else {
       break;
     }

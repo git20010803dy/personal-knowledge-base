@@ -1,5 +1,11 @@
+/**
+ * KnowledgeGraph.tsx - 知识图谱可视化
+ * 使用 vis.js Network 渲染力导向图
+ * 最后修改：2026-03-28 - 从 Cytoscape.js 迁移到 vis.js
+ */
 import { useEffect, useRef, useState, useCallback } from 'react';
-import cytoscape, { type Core, type NodeSingular, type EdgeSingular } from 'cytoscape';
+import { Network, type Options } from 'vis-network';
+import { DataSet } from 'vis-data';
 import {
   Card,
   Input,
@@ -18,7 +24,6 @@ import {
   Tooltip,
   Divider,
   Slider,
-  Collapse,
   message,
 } from 'antd';
 import {
@@ -26,7 +31,6 @@ import {
   ZoomInOutlined,
   ZoomOutOutlined,
   BorderOutlined,
-  AppstoreOutlined,
   NodeIndexOutlined,
   SyncOutlined,
   DownOutlined,
@@ -36,12 +40,13 @@ import { graphApi } from '../services/api';
 
 const { Title, Text, Paragraph } = Typography;
 
-// Node color by type
+// ─── Constants ───────────────────────────────────────────────────────
+
 const TYPE_COLORS: Record<string, string> = {
-  classical_chinese: '#1677ff',
-  idiom: '#52c41a',
-  poetry: '#722ed1',
-  general: '#fa8c16',
+  classical_chinese: '#3b82f6',
+  idiom: '#10b981',
+  poetry: '#a855f7',
+  general: '#f59e0b',
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -51,13 +56,22 @@ const TYPE_LABELS: Record<string, string> = {
   general: '通用',
 };
 
-const RELATION_COLORS: Record<string, string> = {
-  '相关': '#8c8c8c',
-  '包含': '#1677ff',
-  '因果': '#ff4d4f',
-  '对比': '#faad14',
-  '同源': '#722ed1',
+const TYPE_BORDERS: Record<string, string> = {
+  classical_chinese: '#1d4ed8',
+  idiom: '#047857',
+  poetry: '#7e22ce',
+  general: '#d97706',
 };
+
+const RELATION_COLORS: Record<string, string> = {
+  '相关': '#94a3b8',
+  '包含': '#3b82f6',
+  '因果': '#ef4444',
+  '对比': '#f59e0b',
+  '同源': '#a855f7',
+};
+
+// ─── Types ───────────────────────────────────────────────────────────
 
 interface GraphNode {
   id: string;
@@ -115,18 +129,25 @@ function saveParams(p: ClusterParams) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
 }
 
+// ─── Component ───────────────────────────────────────────────────────
+
 export default function KnowledgeGraph() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const cyRef = useRef<Core | null>(null);
+  const graphCardRef = useRef<HTMLDivElement>(null);
+  const networkRef = useRef<Network | null>(null);
+  const nodesRef = useRef<DataSet<any>>(new DataSet());
+  const edgesRef = useRef<DataSet<any>>(new DataSet());
+
   const [loading, setLoading] = useState(true);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [stats, setStats] = useState<GraphStats | null>(null);
   const [searchText, setSearchText] = useState('');
-  const [layout, setLayout] = useState<string>('cose');
+  const [physics, setPhysics] = useState(true);
   const [filterType, setFilterType] = useState<string>('all');
   const [showLabels, setShowLabels] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [graphHeight, setGraphHeight] = useState(500);
 
   // Clustering state
   const [clusterParams, setClusterParams] = useState<ClusterParams>(loadParams);
@@ -139,7 +160,8 @@ export default function KnowledgeGraph() {
     computationTime: number;
   } | null>(null);
 
-  // Fetch graph data
+  // ─── Fetch data ────────────────────────────────────────────────
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
@@ -160,230 +182,310 @@ export default function KnowledgeGraph() {
     fetchData();
   }, [fetchData]);
 
-  // Initialize Cytoscape
+  // ─── Measure container height ─────────────────────────────────
+
   useEffect(() => {
-    if (!containerRef.current || !graphData) return;
+    const measureHeight = () => {
+      if (containerRef.current) {
+        const parent = containerRef.current.parentElement;
+        if (parent) {
+          const h = parent.clientHeight;
+          if (h > 100) {
+            setGraphHeight(h);
+            return;
+          }
+        }
+      }
+      // Fallback: use viewport-based calculation
+      setGraphHeight(Math.max(window.innerHeight - 380, 400));
+    };
 
-    const elements: cytoscape.ElementDefinition[] = [];
+    // Delay to let layout settle
+    const timer = setTimeout(measureHeight, 100);
+    window.addEventListener('resize', measureHeight);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', measureHeight);
+    };
+  }, [graphData]);
 
-    for (const node of graphData.nodes) {
-      elements.push({
-        data: {
-          id: node.id,
-          label: node.title.length > 12 ? node.title.substring(0, 12) + '…' : node.title,
-          fullTitle: node.title,
-          type: node.type,
-          tags: node.tags,
-          category: node.category,
-          importance: node.importance,
-        },
-        classes: node.type,
-      });
-    }
+  // ─── Build vis.js Network ──────────────────────────────────────
 
-    for (const edge of graphData.edges) {
-      elements.push({
-        data: {
-          id: edge.id,
-          source: edge.source_id,
-          target: edge.target_id,
-          relation: edge.relation_type || '相关',
-          strength: edge.strength,
-        },
-      });
-    }
+  useEffect(() => {
+    if (!containerRef.current || !graphData || graphHeight < 100) return;
 
-    const cy = cytoscape({
-      container: containerRef.current,
-      elements,
-      style: [
-        {
-          selector: 'node',
-          style: {
-            'background-color': (ele: NodeSingular) => TYPE_COLORS[ele.data('type')] || '#8c8c8c',
-            'label': showLabels ? 'data(label)' : '',
-            'color': '#333',
-            'font-size': '11px',
-            'text-valign': 'bottom',
-            'text-margin-y': 6,
-            'width': (ele: NodeSingular) => {
-              const imp = ele.data('importance') || 0;
-              return 30 + Math.min(imp * 8, 40);
-            },
-            'height': (ele: NodeSingular) => {
-              const imp = ele.data('importance') || 0;
-              return 30 + Math.min(imp * 8, 40);
-            },
-            'border-width': 2,
-            'border-color': '#fff',
-            // @ts-ignore
-            'shadow-blur': 6,
-            // @ts-ignore
-            'shadow-color': '#00000033',
-            // @ts-ignore
-            'shadow-offset-x': 1,
-            // @ts-ignore
-            'shadow-offset-y': 1,
+    // Delay init to ensure container has real dimensions
+    const timer = setTimeout(() => {
+      if (!containerRef.current) return;
+
+    // Build nodes
+    const nodes = new DataSet(
+      graphData.nodes.map((node) => ({
+        id: node.id,
+        label: node.title.length > 14 ? node.title.substring(0, 14) + '…' : node.title,
+        title: `<b>${node.title}</b><br/>类型: ${TYPE_LABELS[node.type] || node.type}${node.category ? '<br/>分类: ' + node.category : ''}`,
+        color: {
+          background: TYPE_COLORS[node.type] || '#8c8c8c',
+          border: TYPE_BORDERS[node.type] || '#555',
+          highlight: {
+            background: TYPE_COLORS[node.type] || '#8c8c8c',
+            border: '#fbbf24',
+          },
+          hover: {
+            background: TYPE_COLORS[node.type] || '#8c8c8c',
+            border: '#fbbf24',
           },
         },
-        {
-          selector: 'node:active',
-          style: {
-            'overlay-opacity': 0.2,
-            'overlay-color': '#1677ff',
-          },
+        font: {
+          color: '#374151',
+          size: 13,
+          face: 'system-ui, -apple-system, sans-serif',
+          bold: { color: '#111827' },
         },
-        {
-          selector: 'node.highlighted',
-          style: {
-            'border-width': 3,
-            'border-color': '#1677ff',
-            // @ts-ignore
-            'shadow-blur': 12,
-            // @ts-ignore
-            'shadow-color': '#1677ff66',
-          },
+        size: 20 + Math.min((node.importance || 0) * 8, 35),
+        shape: 'dot',
+        borderWidth: 3,
+        borderWidthSelected: 5,
+        shadow: {
+          enabled: true,
+          color: 'rgba(0,0,0,0.15)',
+          size: 10,
+          x: 2,
+          y: 4,
         },
-        {
-          selector: 'node.dimmed',
-          style: {
-            'opacity': 0.25,
-          },
+        // Store original data for filtering
+        _type: node.type,
+        _tags: node.tags,
+        _category: node.category,
+        _importance: node.importance,
+        _title: node.title,
+      }))
+    );
+
+    // Build edges
+    const edges = new DataSet(
+      graphData.edges.map((edge) => ({
+        id: edge.id,
+        from: edge.source_id,
+        to: edge.target_id,
+        label: edge.relation_type || '',
+        color: {
+          color: RELATION_COLORS[edge.relation_type || '相关'] || '#94a3b8',
+          highlight: '#fbbf24',
+          hover: '#fbbf24',
+          opacity: 0.6,
         },
-        {
-          selector: 'edge',
-          style: {
-            'width': (ele: EdgeSingular) => Math.max(ele.data('strength') * 3, 1.5),
-            'line-color': (ele: EdgeSingular) => RELATION_COLORS[ele.data('relation')] || '#8c8c8c',
-            'target-arrow-color': (ele: EdgeSingular) => RELATION_COLORS[ele.data('relation')] || '#8c8c8c',
-            'target-arrow-shape': 'triangle',
-            'curve-style': 'bezier',
-            'opacity': 0.6,
-            'arrow-scale': 0.8,
-          },
+        width: Math.max((edge.strength || 0.5) * 3, 1),
+        arrows: {
+          to: { enabled: true, scaleFactor: 0.6 },
         },
-        {
-          selector: 'edge.highlighted',
-          style: {
-            'width': 4,
-            'opacity': 1,
-            'z-index': 999,
-          },
+        smooth: {
+          enabled: true,
+          type: 'dynamic',
+          roundness: 0.3,
         },
-        {
-          selector: 'edge.dimmed',
-          style: {
-            'opacity': 0.1,
-          },
+        font: {
+          size: 10,
+          color: '#6b7280',
+          strokeWidth: 2,
+          strokeColor: '#ffffff',
+          align: 'middle',
         },
-      ],
+        _relation: edge.relation_type,
+      }))
+    );
+
+    nodesRef.current = nodes;
+    edgesRef.current = edges;
+
+    // vis.js options
+    const options: Options = {
+      nodes: {
+        shape: 'dot',
+        scaling: {
+          min: 16,
+          max: 40,
+        },
+      },
+      edges: {
+        smooth: {
+          enabled: true,
+          type: 'dynamic',
+          roundness: 0.3,
+        },
+      },
+      physics: {
+        enabled: physics,
+        forceAtlas2Based: {
+          gravitationalConstant: -60,
+          centralGravity: 0.008,
+          springLength: 160,
+          springConstant: 0.04,
+          damping: 0.4,
+          avoidOverlap: 0.6,
+        },
+        solver: 'forceAtlas2Based',
+        stabilization: {
+          enabled: true,
+          iterations: 200,
+          updateInterval: 25,
+        },
+      },
+      interaction: {
+        hover: true,
+        tooltipDelay: 200,
+        zoomView: true,
+        dragView: true,
+        navigationButtons: false,
+        keyboard: { enabled: true },
+      },
       layout: {
-        name: layout,
-        animate: true,
-        animationDuration: 500,
-        fit: true,
-        padding: 40,
-        randomize: false,
-        ...(layout === 'cose' ? {
-          nodeRepulsion: () => 8000,
-          idealEdgeLength: () => 120,
-          edgeElasticity: () => 100,
-          nestingFactor: 0.5,
-        } : {}),
-      } as any,
-      minZoom: 0.2,
-      maxZoom: 4,
-      wheelSensitivity: 0.3,
-    });
+        improvedLayout: true,
+      },
+    };
 
-    cy.on('tap', 'node', (evt) => {
-      const node = evt.target;
-      const data = node.data();
-      const graphNode: GraphNode = {
-        id: data.id,
-        title: data.fullTitle,
-        type: data.type,
-        tags: data.tags,
-        category: data.category,
-        importance: data.importance,
-      };
-      setSelectedNode(graphNode);
-      setDrawerOpen(true);
-    });
+    // Create network
+    const network = new Network(containerRef.current, { nodes, edges }, options);
 
-    cy.on('mouseover', 'node', (evt) => {
-      const node = evt.target;
-      const connectedEdges = node.connectedEdges();
-      const connectedNodes = connectedEdges.connectedNodes().union(node);
-      cy.elements().addClass('dimmed');
-      connectedNodes.removeClass('dimmed').addClass('highlighted');
-      connectedEdges.removeClass('dimmed').addClass('highlighted');
-    });
-
-    cy.on('mouseout', 'node', () => {
-      cy.elements().removeClass('dimmed highlighted');
-    });
-
-    cy.on('tap', (evt) => {
-      if (evt.target === cy) {
+    // Events
+    network.on('click', (params) => {
+      if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        const nodeData = nodes.get(nodeId);
+        if (nodeData) {
+          const graphNode: GraphNode = {
+            id: String(nodeId),
+            title: nodeData._title,
+            type: nodeData._type,
+            tags: nodeData._tags || [],
+            category: nodeData._category,
+            importance: nodeData._importance || 0,
+          };
+          setSelectedNode(graphNode);
+          setDrawerOpen(true);
+        }
+      } else {
         setDrawerOpen(false);
         setSelectedNode(null);
       }
     });
 
-    cyRef.current = cy;
+    // Highlight connected nodes on hover
+    network.on('hoverNode', (params) => {
+      const connectedNodes = network.getConnectedNodes(params.node) as string[];
+      const allNodeIds = nodes.getIds() as string[];
+
+      // Dim unconnected nodes
+      const updates = allNodeIds.map((id) => {
+        if (id === params.node || connectedNodes.includes(id)) {
+          return { id, opacity: 1 };
+        }
+        return { id, opacity: 0.15 };
+      });
+      // vis-network doesn't have per-node opacity, so we use color opacity instead
+      // Alternative: just highlight the connected edges
+    });
+
+    network.on('blurNode', () => {
+      // Reset — vis.js handles this with highlight colors automatically
+    });
+
+    networkRef.current = network;
+
+    }, 50); // end setTimeout
 
     return () => {
-      cy.destroy();
-      cyRef.current = null;
+      clearTimeout(timer);
+      if (networkRef.current) {
+        networkRef.current.destroy();
+        networkRef.current = null;
+      }
     };
-  }, [graphData, layout, showLabels]);
+  }, [graphData, showLabels, graphHeight]);
 
-  // Apply type filter
+  // ─── Physics toggle ────────────────────────────────────────────
+
   useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy) return;
+    const network = networkRef.current;
+    if (!network) return;
+    network.setOptions({ physics: { enabled: physics } });
+  }, [physics]);
+
+  // ─── Type filter ───────────────────────────────────────────────
+
+  useEffect(() => {
+    const nodes = nodesRef.current;
+    const edges = edgesRef.current;
+    if (!nodes || !edges || nodes.length === 0) return;
 
     if (filterType === 'all') {
-      cy.nodes().style('display', 'element');
+      // Show all
+      const allIds = nodes.getIds();
+      const updates = allIds.map((id) => ({ id, hidden: false }));
+      nodes.update(updates);
     } else {
-      cy.nodes().forEach((node) => {
-        if (node.data('type') === filterType) {
-          node.style('display', 'element');
-        } else {
-          node.style('display', 'none');
-        }
+      const allIds = nodes.getIds();
+      const updates = allIds.map((id) => {
+        const node = nodes.get(id);
+        return { id, hidden: node._type !== filterType };
       });
+      nodes.update(updates);
     }
-    cy.edges().forEach((edge) => {
-      if (edge.source().style('display') === 'none' || edge.target().style('display') === 'none') {
-        edge.style('display', 'none');
-      } else {
-        edge.style('display', 'element');
-      }
+
+    // Hide edges connecting hidden nodes
+    const visibleNodeIds = new Set(
+      nodes.get({ filter: (n: any) => !n.hidden }).map((n: any) => n.id)
+    );
+    const edgeIds = edges.getIds();
+    const edgeUpdates = edgeIds.map((id) => {
+      const edge = edges.get(id);
+      return { id, hidden: !visibleNodeIds.has(edge.from) || !visibleNodeIds.has(edge.to) };
     });
+    edges.update(edgeUpdates);
   }, [filterType]);
 
-  const handleSearch = () => {
-    const cy = cyRef.current;
-    if (!cy || !searchText.trim()) return;
+  // ─── Search ────────────────────────────────────────────────────
 
-    const found = cy.nodes().filter((n) => {
-      const title: string = n.data('fullTitle') || '';
-      return title.toLowerCase().includes(searchText.toLowerCase());
+  const handleSearch = () => {
+    const network = networkRef.current;
+    const nodes = nodesRef.current;
+    if (!network || !nodes || !searchText.trim()) return;
+
+    const found = nodes.get({
+      filter: (n: any) => (n._title || '').toLowerCase().includes(searchText.toLowerCase()),
     });
 
     if (found.length > 0) {
-      cy.animate({
-        center: { eles: found.first() },
-        zoom: 2,
-        duration: 500,
+      network.focus(found[0].id, { scale: 1.5, animation: { duration: 600, easingFunction: 'easeInOutQuad' } });
+      network.selectNodes([found[0].id]);
+      // Trigger drawer
+      const nodeData = found[0];
+      setSelectedNode({
+        id: String(found[0].id),
+        title: nodeData._title,
+        type: nodeData._type,
+        tags: nodeData._tags || [],
+        category: nodeData._category,
+        importance: nodeData._importance || 0,
       });
-      found.first().emit('tap');
+      setDrawerOpen(true);
     }
   };
 
-  // Clustering controls
+  // ─── Toolbar actions ───────────────────────────────────────────
+
+  const handleZoomFit = () => networkRef.current?.fit({ animation: { duration: 400 } });
+  const handleZoomIn = () => {
+    const net = networkRef.current;
+    if (net) net.moveTo({ scale: net.getScale() * 1.4, animation: { duration: 300 } });
+  };
+  const handleZoomOut = () => {
+    const net = networkRef.current;
+    if (net) net.moveTo({ scale: net.getScale() * 0.7, animation: { duration: 300 } });
+  };
+
+  // ─── Clustering ────────────────────────────────────────────────
+
   const updateParam = (key: keyof ClusterParams, value: number) => {
     const next = { ...clusterParams, [key]: value };
     setClusterParams(next);
@@ -404,7 +506,6 @@ export default function KnowledgeGraph() {
         computationTime: data.computationTime || 0,
       });
       message.success(`聚类完成，耗时 ${data.computationTime}ms，发现 ${data.clusters?.length || 0} 个社区`);
-      // Refresh graph data
       await fetchData();
     } catch (err: any) {
       message.error('聚类失败: ' + (err.message || '未知错误'));
@@ -413,10 +514,7 @@ export default function KnowledgeGraph() {
     }
   };
 
-  // Toolbar actions
-  const handleZoomFit = () => cyRef.current?.fit(undefined, 40);
-  const handleZoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.3);
-  const handleZoomOut = () => cyRef.current?.zoom(cyRef.current.zoom() * 0.7);
+  // ─── Render ────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -428,10 +526,7 @@ export default function KnowledgeGraph() {
 
   if (!graphData || graphData.nodes.length === 0) {
     return (
-      <Empty
-        description="暂无图谱数据"
-        style={{ marginTop: 80 }}
-      >
+      <Empty description="暂无图谱数据" style={{ marginTop: 80 }}>
         <Text type="secondary">添加知识条目后，图谱将自动生成关联</Text>
       </Empty>
     );
@@ -443,24 +538,16 @@ export default function KnowledgeGraph() {
       {stats && (
         <Row gutter={16} style={{ marginBottom: 16 }}>
           <Col span={6}>
-            <Card size="small">
-              <Statistic title="节点数" value={stats.totalNodes} prefix={<NodeIndexOutlined />} />
-            </Card>
+            <Card size="small"><Statistic title="节点数" value={stats.totalNodes} prefix={<NodeIndexOutlined />} /></Card>
           </Col>
           <Col span={6}>
-            <Card size="small">
-              <Statistic title="关联数" value={stats.totalEdges} />
-            </Card>
+            <Card size="small"><Statistic title="关联数" value={stats.totalEdges} /></Card>
           </Col>
           <Col span={6}>
-            <Card size="small">
-              <Statistic title="聚类数" value={stats.clusters} />
-            </Card>
+            <Card size="small"><Statistic title="聚类数" value={stats.clusters} /></Card>
           </Col>
           <Col span={6}>
-            <Card size="small">
-              <Statistic title="平均关联" value={stats.avgConnections} precision={1} />
-            </Card>
+            <Card size="small"><Statistic title="平均关联" value={stats.avgConnections} precision={1} /></Card>
           </Col>
         </Row>
       )}
@@ -477,21 +564,8 @@ export default function KnowledgeGraph() {
             style={{ width: 200 }}
             allowClear
           />
-          <Button type="primary" onClick={handleSearch} icon={<SearchOutlined />}>
-            搜索
-          </Button>
+          <Button type="primary" onClick={handleSearch} icon={<SearchOutlined />}>搜索</Button>
           <Divider type="vertical" />
-          <Select
-            value={layout}
-            onChange={setLayout}
-            style={{ width: 140 }}
-            options={[
-              { value: 'cose', label: '力导向图' },
-              { value: 'circle', label: '环形布局' },
-              { value: 'grid', label: '网格布局' },
-              { value: 'concentric', label: '同心圆' },
-            ]}
-          />
           <Select
             value={filterType}
             onChange={setFilterType}
@@ -504,8 +578,21 @@ export default function KnowledgeGraph() {
               { value: 'general', label: '通用' },
             ]}
           />
+          <Tooltip title="物理模拟">
+            <Switch checked={physics} onChange={setPhysics} checkedChildren="物理" unCheckedChildren="静止" />
+          </Tooltip>
           <Tooltip title="显示标签">
-            <Switch checked={showLabels} onChange={setShowLabels} checkedChildren="标签" unCheckedChildren="标签" />
+            <Switch checked={showLabels} onChange={(v) => {
+              setShowLabels(v);
+              const nodes = nodesRef.current;
+              if (nodes && nodes.length > 0) {
+                const updates = nodes.getIds().map((id) => ({
+                  id,
+                  font: { size: v ? 13 : 0 },
+                }));
+                nodes.update(updates);
+              }
+            }} checkedChildren="标签" unCheckedChildren="标签" />
           </Tooltip>
           <Divider type="vertical" />
           <Button onClick={handleZoomIn} icon={<ZoomInOutlined />} />
@@ -514,7 +601,7 @@ export default function KnowledgeGraph() {
         </Space>
       </Card>
 
-      {/* Clustering Parameters Panel */}
+      {/* Clustering panel */}
       <Card size="small" style={{ marginBottom: 16 }}>
         <div
           style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
@@ -530,53 +617,25 @@ export default function KnowledgeGraph() {
               <Col span={12}>
                 <div style={{ marginBottom: 12 }}>
                   <Text>相似度阈值</Text>
-                  <Slider
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={clusterParams.threshold}
-                    onChange={(v) => updateParam('threshold', v)}
-                    marks={{ 0: '0', 0.5: '0.5', 1: '1' }}
-                  />
-                  <Text type="secondary">{clusterParams.threshold.toFixed(2)}</Text>
+                  <Slider min={0} max={1} step={0.05} value={clusterParams.threshold}
+                    onChange={(v) => updateParam('threshold', v)} marks={{ 0: '0', 0.5: '0.5', 1: '1' }} />
                 </div>
                 <div style={{ marginBottom: 12 }}>
                   <Text>关键词权重</Text>
-                  <Slider
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={clusterParams.keywordWeight}
-                    onChange={(v) => updateParam('keywordWeight', v)}
-                    marks={{ 0: '0', 0.5: '0.5', 1: '1' }}
-                  />
-                  <Text type="secondary">{clusterParams.keywordWeight.toFixed(2)}</Text>
+                  <Slider min={0} max={1} step={0.05} value={clusterParams.keywordWeight}
+                    onChange={(v) => updateParam('keywordWeight', v)} marks={{ 0: '0', 0.5: '0.5', 1: '1' }} />
                 </div>
               </Col>
               <Col span={12}>
                 <div style={{ marginBottom: 12 }}>
                   <Text>标签权重</Text>
-                  <Slider
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={clusterParams.tagWeight}
-                    onChange={(v) => updateParam('tagWeight', v)}
-                    marks={{ 0: '0', 0.5: '0.5', 1: '1' }}
-                  />
-                  <Text type="secondary">{clusterParams.tagWeight.toFixed(2)}</Text>
+                  <Slider min={0} max={1} step={0.05} value={clusterParams.tagWeight}
+                    onChange={(v) => updateParam('tagWeight', v)} marks={{ 0: '0', 0.5: '0.5', 1: '1' }} />
                 </div>
                 <div style={{ marginBottom: 12 }}>
                   <Text>分类权重</Text>
-                  <Slider
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={clusterParams.categoryWeight}
-                    onChange={(v) => updateParam('categoryWeight', v)}
-                    marks={{ 0: '0', 0.5: '0.5', 1: '1' }}
-                  />
-                  <Text type="secondary">{clusterParams.categoryWeight.toFixed(2)}</Text>
+                  <Slider min={0} max={1} step={0.05} value={clusterParams.categoryWeight}
+                    onChange={(v) => updateParam('categoryWeight', v)} marks={{ 0: '0', 0.5: '0.5', 1: '1' }} />
                 </div>
               </Col>
             </Row>
@@ -590,19 +649,14 @@ export default function KnowledgeGraph() {
               )}
             </div>
 
-            <Button
-              type="primary"
-              icon={<SyncOutlined spin={clustering} />}
-              onClick={handleRunClustering}
-              loading={clustering}
-            >
+            <Button type="primary" icon={<SyncOutlined spin={clustering} />} onClick={handleRunClustering} loading={clustering}>
               重新聚类
             </Button>
 
             {clusterInfo && (
               <div style={{ marginTop: 12 }}>
                 <Text type="secondary">
-                  上次聚类: {clusterInfo.lastRun} | 条目数: {clusterInfo.itemCount} | 聚类数: {clusterInfo.clusterCount} | 耗时: {clusterInfo.computationTime}ms
+                  上次聚类: {clusterInfo.lastRun} | 条目: {clusterInfo.itemCount} | 社区: {clusterInfo.clusterCount} | 耗时: {clusterInfo.computationTime}ms
                 </Text>
               </div>
             )}
@@ -610,41 +664,42 @@ export default function KnowledgeGraph() {
         )}
       </Card>
 
-      {/* Graph container */}
+      {/* Graph canvas */}
       <Card
-        style={{ flex: 1, minHeight: 400, position: 'relative' }}
-        bodyStyle={{ padding: 0, height: '100%' }}
+        style={{ flex: 1, position: 'relative', borderRadius: 12, overflow: 'hidden' }}
+        bodyStyle={{ padding: 0, height: graphHeight, borderRadius: 12 }}
       >
-        <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: 500 }} />
+        <div ref={containerRef} style={{
+          width: '100%',
+          height: graphHeight,
+          background: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)',
+        }} />
 
         {/* Legend */}
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 12,
-            left: 12,
-            background: '#ffffffdd',
-            padding: '8px 12px',
-            borderRadius: 6,
-            fontSize: 12,
-          }}
-        >
+        <div style={{
+          position: 'absolute',
+          bottom: 16,
+          left: 16,
+          background: '#ffffffee',
+          backdropFilter: 'blur(8px)',
+          padding: '10px 14px',
+          borderRadius: 8,
+          fontSize: 12,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+        }}>
           <Text strong style={{ fontSize: 12 }}>图例</Text>
-          <div style={{ display: 'flex', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 14, marginTop: 6, flexWrap: 'wrap' }}>
             {Object.entries(TYPE_LABELS).map(([type, label]) => (
-              <span key={type}>
-                <span
-                  style={{
-                    display: 'inline-block',
-                    width: 10,
-                    height: 10,
-                    borderRadius: '50%',
-                    backgroundColor: TYPE_COLORS[type],
-                    marginRight: 4,
-                    verticalAlign: 'middle',
-                  }}
-                />
-                <span style={{ verticalAlign: 'middle' }}>{label}</span>
+              <span key={type} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{
+                  display: 'inline-block',
+                  width: 12,
+                  height: 12,
+                  borderRadius: '50%',
+                  backgroundColor: TYPE_COLORS[type],
+                  boxShadow: `0 0 6px ${TYPE_COLORS[type]}44`,
+                }} />
+                <span>{label}</span>
               </span>
             ))}
           </div>
@@ -657,23 +712,17 @@ export default function KnowledgeGraph() {
         placement="right"
         width={420}
         open={drawerOpen}
-        onClose={() => {
-          setDrawerOpen(false);
-          setSelectedNode(null);
-        }}
+        onClose={() => { setDrawerOpen(false); setSelectedNode(null); }}
         destroyOnClose
       >
         {selectedNode && (
           <div>
             <div style={{ marginBottom: 16 }}>
-              <Tag color={TYPE_COLORS[selectedNode.type]}>
-                {TYPE_LABELS[selectedNode.type] || selectedNode.type}
-              </Tag>
+              <Tag color={TYPE_COLORS[selectedNode.type]}>{TYPE_LABELS[selectedNode.type] || selectedNode.type}</Tag>
               {selectedNode.category && <Tag>{selectedNode.category}</Tag>}
             </div>
 
             <Title level={5}>{selectedNode.title}</Title>
-
             <Divider />
 
             <Paragraph>
@@ -685,9 +734,7 @@ export default function KnowledgeGraph() {
               <div style={{ marginBottom: 16 }}>
                 <Text strong>标签: </Text>
                 <div style={{ marginTop: 4 }}>
-                  {selectedNode.tags.map((tag) => (
-                    <Tag key={tag}>{tag}</Tag>
-                  ))}
+                  {selectedNode.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}
                 </div>
               </div>
             )}
