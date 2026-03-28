@@ -116,7 +116,7 @@ export const agentApi = {
     sessionId: string | undefined,
     onToken: (token: string) => void,
     onSources: (sources: Array<{ id: string; title: string }>) => void,
-    onDone: (data: { session_id: string; error?: boolean }) => void,
+    onDone: (data: { session_id: string; error?: boolean; tokens?: number; time_ms?: number }) => void,
     onError: (err: Error) => void,
     options?: { model?: string; temperature?: number; top_p?: number },
   ) => {

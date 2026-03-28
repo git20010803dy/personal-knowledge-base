@@ -223,10 +223,37 @@ function runMigrations(db: Database): void {
       version: 5,
       sql: `
         -- review_questions table created in initTables
-        -- Add category column for existing installs
       `,
       extra: (db: Database) => {
         try { db.run("ALTER TABLE review_questions ADD COLUMN category TEXT DEFAULT '其他'"); } catch {}
+      },
+    },
+    {
+      version: 6,
+      sql: `
+        -- Ensure review_questions has category column (idempotent)
+      `,
+      extra: (db: Database) => {
+        try { db.run("ALTER TABLE review_questions ADD COLUMN category TEXT DEFAULT '其他'"); } catch {}
+      },
+    },
+    {
+      version: 7,
+      sql: `
+        -- Ensure review_records has question_id column (idempotent)
+      `,
+      extra: (db: Database) => {
+        try { db.run("ALTER TABLE review_records ADD COLUMN question_id TEXT"); } catch {}
+      },
+    },
+    {
+      version: 8,
+      sql: `
+        -- Ensure chat_messages has tokens and time_ms columns
+      `,
+      extra: (db: Database) => {
+        try { db.run("ALTER TABLE chat_messages ADD COLUMN tokens INTEGER DEFAULT 0"); } catch {}
+        try { db.run("ALTER TABLE chat_messages ADD COLUMN time_ms INTEGER DEFAULT 0"); } catch {}
       },
     },
   ];

@@ -11,7 +11,7 @@ import {
   Empty,
   Popconfirm,
   message,
-  Drawer,
+  Modal,
   Descriptions,
   Collapse,
   Select,
@@ -48,6 +48,9 @@ interface Message {
   content: string;
   sources?: Array<{ id: string; title: string }>;
   isStreaming?: boolean;
+  tokens?: number;
+  time_ms?: number;
+  created_at?: string;
 }
 
 export default function AgentChat() {
@@ -57,6 +60,7 @@ export default function AgentChat() {
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [lastUsage, setLastUsage] = useState<{ tokens: number; time_ms: number } | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detailItem, setDetailItem] = useState<any>(null);
@@ -110,6 +114,8 @@ export default function AgentChat() {
         role: m.role,
         content: m.content,
         sources: m.sources,
+        tokens: m.tokens || 0,
+        time_ms: m.time_ms || 0,
       }));
       setMessages(msgs);
     } catch (err: any) {
@@ -159,6 +165,7 @@ export default function AgentChat() {
       role: 'assistant',
       content: '',
       isStreaming: true,
+      created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, assistantMsg]);
 
@@ -188,12 +195,15 @@ export default function AgentChat() {
         sourcesInfo = sources;
       },
       // onDone
-      (data: { session_id: string; error?: boolean }) => {
+      (data: { session_id: string; error?: boolean; tokens?: number; time_ms?: number }) => {
         finalSessionId = data.session_id;
+        if (data.tokens || data.time_ms) {
+          setLastUsage({ tokens: data.tokens || 0, time_ms: data.time_ms || 0 });
+        }
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantMsgId
-              ? { ...m, isStreaming: false, sources: sourcesInfo.length > 0 ? sourcesInfo : undefined }
+              ? { ...m, isStreaming: false, sources: sourcesInfo.length > 0 ? sourcesInfo : undefined, tokens: data.tokens || 0, time_ms: data.time_ms || 0 }
               : m
           )
         );
@@ -419,6 +429,12 @@ export default function AgentChat() {
                           ))}
                         </div>
                       )}
+                      {/* Token/time usage */}
+                      {msg.role === 'assistant' && (msg.tokens > 0 || msg.time_ms > 0) && (
+                        <div style={{ marginTop: 6, color: '#bbb', fontSize: 11 }}>
+                          📅 {new Date(msg.created_at || Date.now()).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} | 🔢 {msg.tokens || 0} tokens | ⏱️ {((msg.time_ms || 0) / 1000).toFixed(1)}s
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -511,48 +527,93 @@ export default function AgentChat() {
         </div>
       </Layout>
 
-      {/* Knowledge detail drawer */}
-      <Drawer
+      {/* Knowledge detail modal */}
+      <Modal
         title="知识详情"
         open={!!detailId}
-        onClose={() => {
+        onCancel={() => {
           setDetailId(null);
           setDetailItem(null);
         }}
-        width={520}
+        footer={null}
+        width={860}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
       >
         {detailLoading ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
             <Spin />
           </div>
         ) : detailItem ? (
-          <Descriptions column={1} bordered size="small">
-            <Descriptions.Item label="标题">{detailItem.title}</Descriptions.Item>
-            <Descriptions.Item label="类型">
-              <Tag color={typeLabelMap[detailItem.type]?.color}>
-                {typeLabelMap[detailItem.type]?.label || detailItem.type}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="标签">
-              {(typeof detailItem.tags === 'string'
-                ? JSON.parse(detailItem.tags)
-                : detailItem.tags
-              )?.map((t: string) => <Tag key={t}>{t}</Tag>) || '-'}
-            </Descriptions.Item>
-            <Descriptions.Item label="分类">{detailItem.category || '-'}</Descriptions.Item>
-            <Descriptions.Item label="原始内容">
-              <div style={{ maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-                {detailItem.raw_content}
+          <div>
+            <Descriptions column={1} bordered size="small">
+              <Descriptions.Item label="标题">{detailItem.title}</Descriptions.Item>
+              <Descriptions.Item label="类型">
+                <Tag color={typeLabelMap[detailItem.type]?.color}>
+                  {typeLabelMap[detailItem.type]?.label || detailItem.type}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="标签">
+                {(typeof detailItem.tags === 'string'
+                  ? JSON.parse(detailItem.tags)
+                  : detailItem.tags
+                )?.map((t: string) => <Tag key={t}>{t}</Tag>) || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="分类">{detailItem.category || '-'}</Descriptions.Item>
+              <Descriptions.Item label="创建时间">
+                {detailItem.created_at ? new Date(detailItem.created_at).toLocaleString('zh-CN') : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="更新时间">
+                {detailItem.updated_at ? new Date(detailItem.updated_at).toLocaleString('zh-CN') : '-'}
+              </Descriptions.Item>
+            </Descriptions>
+
+            <div style={{ marginTop: 16 }}>
+              <Text strong>原始内容</Text>
+              <div
+                style={{
+                  maxHeight: 250,
+                  overflow: 'auto',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  background: '#fafafa',
+                  padding: 12,
+                  borderRadius: 6,
+                  marginTop: 8,
+                  border: '1px solid #f0f0f0',
+                  fontSize: 13,
+                  lineHeight: 1.8,
+                }}
+              >
+                {detailItem.raw_content || '-'}
               </div>
-            </Descriptions.Item>
-            <Descriptions.Item label="结构化内容">
-              <pre style={{ maxHeight: 300, overflow: 'auto', background: '#f6f8fa', padding: 12 }}>
-                {detailItem.content ? JSON.stringify(JSON.parse(detailItem.content), null, 2) : '-'}
+            </div>
+
+            <div style={{ marginTop: 16 }}>
+              <Text strong>结构化内容</Text>
+              <pre
+                style={{
+                  maxHeight: 350,
+                  overflow: 'auto',
+                  background: '#f6f8fa',
+                  padding: 12,
+                  borderRadius: 6,
+                  marginTop: 8,
+                  border: '1px solid #f0f0f0',
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {detailItem.content ? (() => {
+                  try { return JSON.stringify(JSON.parse(detailItem.content), null, 2); }
+                  catch { return detailItem.content; }
+                })() : '-'}
               </pre>
-            </Descriptions.Item>
-          </Descriptions>
+            </div>
+          </div>
         ) : null}
-      </Drawer>
+      </Modal>
     </Layout>
   );
 }

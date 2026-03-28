@@ -5,3 +5,4 @@ export { providerRoutes } from './providers';
 export { graphRoutes } from './graph';
 export { reviewRoutes } from './review';
 export { tokenRoutes } from './tokens';
+export { categoryRoutes } from './categories';

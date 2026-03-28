@@ -107,6 +107,7 @@ export default function ProviderManagement() {
       const values = await form.validateFields();
       setTesting(true);
       const res = await providerApi.test({
+        id: editingId || undefined,  // pass ID so backend can use stored key if masked
         provider_type: values.provider_type,
         api_key: values.api_key,
         base_url: values.base_url,

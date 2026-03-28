@@ -63,7 +63,8 @@ export class KnowledgeService {
     }
   }
 
-  async processTextInput(rawContent: string, type?: KnowledgeType, options?: LLMCallOptions): Promise<ProcessingResult> {
+  async processTextInput(rawContent: string, type?: KnowledgeType, options?: LLMCallOptions): Promise<ProcessingResult & { _usage?: { total_tokens: number; time_ms: number } }> {
+    const startTime = Date.now();
     const info = await this.getLLM();
     const llm = info.provider;
     const detectedType = type || detectType(rawContent);
@@ -79,9 +80,12 @@ export class KnowledgeService {
     const prompt = renderTemplate(templateStr, { raw_content: llmInput });
 
     const response = await llm.chat([{ role: 'user', content: prompt }], options);
+    const timeMs = Date.now() - startTime;
 
     // Record token usage
+    let totalTokens = 0;
     if (response.usage) {
+      totalTokens = response.usage.totalTokens;
       recordTokenUsage({
         model: options?.model || info.model,
         provider_name: info.providerName,
@@ -106,6 +110,7 @@ export class KnowledgeService {
       tags: (parsed.tags as string[]) || [],
       category: (parsed.category as string) || null,
       keywords: (parsed.keywords as string[]) || [],
+      _usage: { total_tokens: totalTokens, time_ms: timeMs },
     };
   }
 

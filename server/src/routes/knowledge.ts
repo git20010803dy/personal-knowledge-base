@@ -158,6 +158,22 @@ export async function knowledgeRoutes(
     if (!updated) {
       return reply.status(404).send({ error: 'Knowledge item not found' });
     }
+
+    // Sync category to review_questions if category changed
+    if (body.category !== undefined) {
+      try {
+        const db = await getDb();
+        db.run(
+          'UPDATE review_questions SET category = ? WHERE item_id = ?',
+          [(body.category as string) || '其他', id],
+        );
+        saveDb();
+      } catch (e) {
+        // Non-critical, don't fail the request
+        console.error('Failed to sync category to review_questions:', e);
+      }
+    }
+
     return { data: updated };
   });
 
@@ -228,9 +244,15 @@ export async function knowledgeRoutes(
 
       // Step 2: Process each piece to get structured results
       const pieces = [];
+      let totalTokens = 0;
+      let totalTimeMs = 0;
       for (const rawPiece of rawPieces) {
         const pieceType = body.type || (rawPiece.suggested_type as KnowledgeType) || undefined;
         const processing = await service.processTextInput(rawPiece.content, pieceType, options);
+        if (processing._usage) {
+          totalTokens += processing._usage.total_tokens;
+          totalTimeMs += processing._usage.time_ms;
+        }
         pieces.push({
           id: nanoid(),
           content: rawPiece.content,
@@ -239,7 +261,7 @@ export async function knowledgeRoutes(
         });
       }
 
-      return { success: true, pieces };
+      return { success: true, pieces, _usage: { total_tokens: totalTokens, time_ms: totalTimeMs } };
     } catch (error: any) {
       app.log.error(error, 'Failed to split-preview');
       return reply.status(500).send({ error: error.message });

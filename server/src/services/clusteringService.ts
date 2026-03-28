@@ -1,3 +1,4 @@
+import { nanoid } from 'nanoid';
 import { getDb, saveDb } from '../db/database';
 import type { ClusterGroup } from '@pkb/shared';
 
@@ -256,6 +257,28 @@ export class ClusteringService {
   }
 
   /**
+   * Create graph edges from high-similarity pairs
+   * This makes clustering results visible in the graph
+   */
+  private async syncEdgesToGraph(graph: Graph): Promise<void> {
+    const db = await getDb();
+
+    // Remove existing clustering-generated edges
+    db.run("DELETE FROM knowledge_links WHERE relation_type = '聚类'");
+
+    // Add new edges for pairs with similarity > threshold
+    for (const edge of graph.edges) {
+      if (edge.weight >= 0.3) {  // Only create links for reasonably similar pairs
+        db.run(
+          'INSERT INTO knowledge_links (id, source_id, target_id, relation_type, strength) VALUES (?, ?, ?, ?, ?)',
+          [nanoid(), edge.source, edge.target, '聚类', Math.round(edge.weight * 100) / 100],
+        );
+      }
+    }
+    saveDb();
+  }
+
+  /**
    * Run full clustering pipeline
    */
   async runClustering(params?: Partial<ClusteringParams>): Promise<ClusteringResult> {
@@ -360,6 +383,9 @@ export class ClusteringService {
     } catch (e) {
       console.error('Failed to cache clustering result:', e);
     }
+
+    // Sync similarity edges to graph so they're visible
+    await this.syncEdgesToGraph(graph);
 
     return result;
   }

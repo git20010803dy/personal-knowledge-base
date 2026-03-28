@@ -7,7 +7,7 @@
 import { nanoid } from 'nanoid';
 import { getDb, saveDb } from '../db/database';
 import type { ReviewStats } from '@pkb/shared';
-import type { PreGeneratedQuestion, ReviewCategory } from './reviewQuestionService';
+import type { PreGeneratedQuestion } from './reviewQuestionService';
 
 // ─── SM-2 Spaced Repetition ───────────────────────────────────────────
 
@@ -30,32 +30,33 @@ export function calculateNextReview(
   return { interval, nextReview: nextReview.toISOString() };
 }
 
-// ─── Get due item IDs ────────────────────────────────────────────────
+// ─── Get due item IDs (items with unanswered questions today) ───────
 
 export async function getDueItems(
   count: number = 10,
   category?: string,
 ): Promise<string[]> {
   const db = await getDb();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayStr = today.toISOString();
 
+  // Find items that have at least one question NOT answered today
   let sql = `
     SELECT DISTINCT rq.item_id FROM review_questions rq
-    LEFT JOIN (
-      SELECT item_id, MAX(next_review) as max_next
-      FROM review_records
-      WHERE user_answer IS NOT NULL
-      GROUP BY item_id
-    ) rr ON rq.item_id = rr.item_id
-    WHERE (rr.max_next IS NULL OR rr.max_next <= datetime('now'))
+    WHERE rq.id NOT IN (
+      SELECT DISTINCT question_id FROM review_records
+      WHERE created_at >= ? AND user_answer IS NOT NULL AND question_id IS NOT NULL
+    )
   `;
-  const params: any[] = [];
+  const params: any[] = [todayStr];
 
   if (category && category !== '全部') {
     sql += ` AND rq.category = ?`;
     params.push(category);
   }
 
-  sql += ` ORDER BY COALESCE(rr.max_next, rq.created_at) ASC LIMIT ?`;
+  sql += ` LIMIT ?`;
   params.push(count);
 
   const res = db.exec(sql, params);
@@ -77,8 +78,21 @@ export async function startReview(
   category?: string,
 ): Promise<ReviewSessionItem[]> {
   const db = await getDb();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayStr = today.toISOString();
+
   const itemIds = await getDueItems(count, category);
   if (itemIds.length === 0) return [];
+
+  // Get IDs of questions already answered today
+  const answeredRes = db.exec(
+    'SELECT DISTINCT question_id FROM review_records WHERE created_at >= ? AND user_answer IS NOT NULL AND question_id IS NOT NULL',
+    [todayStr],
+  );
+  const answeredIds = new Set<string>(
+    answeredRes.length > 0 ? answeredRes[0].values.map((r) => r[0] as string) : [],
+  );
 
   const results: ReviewSessionItem[] = [];
 
@@ -98,15 +112,18 @@ export async function startReview(
     const qRes = db.exec(qSql, qParams);
     if (qRes.length === 0 || qRes[0].values.length === 0) continue;
 
-    const questions: PreGeneratedQuestion[] = qRes[0].values.map((row) => ({
-      id: row[0] as string,
-      item_id: row[1] as string,
-      question: row[2] as string,
-      options: JSON.parse(row[3] as string),
-      correct_idx: row[4] as number,
-      explanation: row[5] as string,
-      category: (row[6] as ReviewCategory) || '其他',
-    }));
+    // Filter out questions already answered today
+    const questions: PreGeneratedQuestion[] = qRes[0].values
+      .map((row) => ({
+        id: row[0] as string,
+        item_id: row[1] as string,
+        question: row[2] as string,
+        options: JSON.parse(row[3] as string),
+        correct_idx: row[4] as number,
+        explanation: row[5] as string,
+        category: (row[6] as string) || '其他',
+      }))
+      .filter((q) => !answeredIds.has(q.id));
 
     results.push({ item_id: itemId, item_title: itemTitle, questions });
   }
@@ -166,23 +183,28 @@ export async function getTodayStats(): Promise<ReviewStats> {
   today.setHours(0, 0, 0, 0);
   const todayStr = today.toISOString();
 
-  const dueRes = db.exec(
-    `SELECT COUNT(DISTINCT rq.item_id) FROM review_questions rq
-     LEFT JOIN (
-       SELECT item_id, MAX(next_review) as max_next
-       FROM review_records WHERE user_answer IS NOT NULL
-       GROUP BY item_id
-     ) rr ON rq.item_id = rr.item_id
-     WHERE rr.max_next IS NULL OR rr.max_next <= datetime('now')`,
-  );
-  const dueCount = dueRes.length > 0 ? (dueRes[0].values[0][0] as number) : 0;
+  // Total questions in the pool
+  const totalRes = db.exec('SELECT COUNT(*) FROM review_questions');
+  const totalQuestions = totalRes.length > 0 ? (totalRes[0].values[0][0] as number) : 0;
 
+  // Questions answered today (distinct by question_id)
+  const answeredTodayRes = db.exec(
+    'SELECT COUNT(DISTINCT question_id) FROM review_records WHERE created_at >= ? AND user_answer IS NOT NULL AND question_id IS NOT NULL',
+    [todayStr],
+  );
+  const answeredToday = answeredTodayRes.length > 0 ? (answeredTodayRes[0].values[0][0] as number) : 0;
+
+  // Due count = total questions - answered today
+  const dueCount = Math.max(0, totalQuestions - answeredToday);
+
+  // Total answers today (for accuracy calculation)
   const completedRes = db.exec(
     'SELECT COUNT(*) FROM review_records WHERE created_at >= ? AND user_answer IS NOT NULL',
     [todayStr],
   );
   const completedToday = completedRes.length > 0 ? (completedRes[0].values[0][0] as number) : 0;
 
+  // Accuracy
   const correctRes = db.exec(
     'SELECT COUNT(*) FROM review_records WHERE created_at >= ? AND is_correct = 1',
     [todayStr],
@@ -190,6 +212,7 @@ export async function getTodayStats(): Promise<ReviewStats> {
   const correctCount = correctRes.length > 0 ? (correctRes[0].values[0][0] as number) : 0;
   const accuracyRate = completedToday > 0 ? Math.round((correctCount / completedToday) * 100) : 0;
 
+  // Streak days
   let streak = 0;
   const checkDate = new Date(today);
   for (let i = 0; i < 365; i++) {

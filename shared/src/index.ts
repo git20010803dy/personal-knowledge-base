@@ -210,7 +210,9 @@ export interface ChatMessage {
   session_id: string;
   role: 'user' | 'assistant';
   content: string;
-  sources: string[] | null;  // knowledge item IDs
+  sources: Array<{ id: string; title: string }> | null;  // referenced knowledge items
+  tokens: number;   // LLM tokens used (assistant messages only)
+  time_ms: number;  // response time in ms (assistant messages only)
   created_at: string;
 }
 

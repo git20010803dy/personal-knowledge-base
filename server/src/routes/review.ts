@@ -1,15 +1,16 @@
 /**
  * review.ts - 复习相关 API 路由
- * GET  /api/review/stats    - 今日统计
- * GET  /api/review/categories - 可用分类列表
+ * GET  /api/review/stats       - 今日统计
+ * GET  /api/review/categories  - 可用分类列表（从数据库读取）
  * GET  /api/review/start?category=历史 - 开始复习
- * POST /api/review/submit   - 提交答案
- * GET  /api/review/history  - 复习历史
- * 最后修改：2026-03-28 - 改为 category 筛选
+ * POST /api/review/submit      - 提交答案
+ * GET  /api/review/history     - 复习历史
+ * 最后修改：2026-03-28 - 分类改为从 categories 表读取
  */
 import type { FastifyInstance } from 'fastify';
 import { startReview, submitAnswer, getTodayStats, getReviewHistory } from '../services/reviewService';
-import { getUsedCategories, REVIEW_CATEGORIES } from '../services/reviewQuestionService';
+import { getUsedCategories, getItemsWithoutQuestions, generateMissingQuestions } from '../services/reviewQuestionService';
+import { getAllCategories } from '../services/categoryService';
 
 export async function reviewRoutes(app: FastifyInstance) {
   // Get today's review stats
@@ -23,15 +24,21 @@ export async function reviewRoutes(app: FastifyInstance) {
     }
   });
 
-  // Get available categories (fixed list + which ones have questions)
+  // Get available categories for review (from database, with hasQuestions flag)
   app.get('/api/review/categories', async (req, reply) => {
     try {
-      const used = await getUsedCategories();
-      // Return all fixed categories, mark which ones have questions
-      const categories = REVIEW_CATEGORIES.map((c) => ({
-        name: c,
-        hasQuestions: used.includes(c),
-      }));
+      const [allCats, usedCats] = await Promise.all([
+        getAllCategories(),
+        getUsedCategories(),
+      ]);
+      // Return "全部" + database categories, mark which ones have questions
+      const categories = [
+        { name: '全部', hasQuestions: usedCats.length > 0 },
+        ...allCats.map((c) => ({
+          name: c.name,
+          hasQuestions: usedCats.includes(c.name),
+        })),
+      ];
       return categories;
     } catch (error: any) {
       app.log.error(error, 'Failed to get categories');
@@ -39,7 +46,7 @@ export async function reviewRoutes(app: FastifyInstance) {
     }
   });
 
-  // Start a review session (GET with optional ?category=历史)
+  // Start a review session
   app.get('/api/review/start', async (req, reply) => {
     const query = req.query as { category?: string; count?: string };
     const count = parseInt(query.count || '10', 10);
@@ -85,5 +92,22 @@ export async function reviewRoutes(app: FastifyInstance) {
       pageSize,
       totalPages: Math.ceil(result.total / pageSize),
     };
+  });
+
+  // Get count of items without review questions
+  app.get('/api/review/missing', async () => {
+    const items = await getItemsWithoutQuestions();
+    return { count: items.length, items: items.slice(0, 5) };  // Return first 5 titles as preview
+  });
+
+  // Batch generate review questions for items that don't have them
+  app.post('/api/review/generate', async (req, reply) => {
+    try {
+      const result = await generateMissingQuestions();
+      return result;
+    } catch (error: any) {
+      app.log.error(error, 'Failed to generate review questions');
+      return reply.status(500).send({ error: error.message || '生成题目失败' });
+    }
   });
 }

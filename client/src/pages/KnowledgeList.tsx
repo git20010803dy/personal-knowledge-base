@@ -11,9 +11,19 @@ import {
   message,
   Modal,
   Descriptions,
+  Card,
+  Collapse,
 } from 'antd';
-import { SearchOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
+import {
+  SearchOutlined,
+  DeleteOutlined,
+  EyeOutlined,
+  PlusOutlined,
+  EditOutlined,
+  TagsOutlined,
+} from '@ant-design/icons';
 import { knowledgeApi } from '../services/api';
+import axios from 'axios';
 
 const { Title, Text } = Typography;
 const { Search } = Input;
@@ -34,6 +44,10 @@ export default function KnowledgeList() {
   const [searchText, setSearchText] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [detailItem, setDetailItem] = useState<any>(null);
+  const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
+  const [catModalOpen, setCatModalOpen] = useState(false);
+  const [editingCat, setEditingCat] = useState<{ id: string; name: string } | null>(null);
+  const [catInputValue, setCatInputValue] = useState('');
 
   const fetchData = async () => {
     setLoading(true);
@@ -55,9 +69,72 @@ export default function KnowledgeList() {
     }
   };
 
+  const fetchCategories = async () => {
+    try {
+      const res = await axios.get('/api/categories');
+      setCategories(res.data);
+    } catch {}
+  };
+
+  const handleCategoryChange = async (id: string, newCategory: string) => {
+    try {
+      await knowledgeApi.update(id, { category: newCategory });
+      message.success('分类已更新');
+      setData((prev) => prev.map((item) => item.id === id ? { ...item, category: newCategory } : item));
+    } catch (err: any) {
+      message.error(err.message || '更新分类失败');
+    }
+  };
+
+  // ─── Category CRUD ───────────────────────────────────────────
+
+  const handleAddCategory = async () => {
+    if (!catInputValue.trim()) return;
+    try {
+      const res = await axios.post('/api/categories', { name: catInputValue.trim() });
+      setCategories((prev) => [...prev, res.data]);
+      setCatInputValue('');
+      setCatModalOpen(false);
+      message.success('分类已添加');
+    } catch (err: any) {
+      message.error(err.response?.data?.error || err.message || '添加失败');
+    }
+  };
+
+  const handleEditCategory = async () => {
+    if (!editingCat || !catInputValue.trim()) return;
+    try {
+      const res = await axios.put(`/api/categories/${editingCat.id}`, { name: catInputValue.trim() });
+      setCategories((prev) => prev.map((c) => c.id === editingCat.id ? res.data : c));
+      setEditingCat(null);
+      setCatInputValue('');
+      setCatModalOpen(false);
+      message.success('分类已更新');
+      // Refresh data since category names may have changed
+      fetchData();
+    } catch (err: any) {
+      message.error(err.response?.data?.error || err.message || '更新失败');
+    }
+  };
+
+  const handleDeleteCategory = async (id: string) => {
+    try {
+      await axios.delete(`/api/categories/${id}`);
+      setCategories((prev) => prev.filter((c) => c.id !== id));
+      message.success('分类已删除');
+      fetchData();
+    } catch (err: any) {
+      message.error(err.message || '删除失败');
+    }
+  };
+
   useEffect(() => {
     fetchData();
   }, [page, pageSize, typeFilter]);
+
+  useEffect(() => {
+    fetchCategories();
+  }, []);
 
   const handleDelete = async (id: string) => {
     try {
@@ -109,8 +186,18 @@ export default function KnowledgeList() {
       title: '分类',
       dataIndex: 'category',
       key: 'category',
-      width: 120,
-      render: (cat: string) => cat || '-',
+      width: 140,
+      render: (cat: string, record: any) => (
+        <Select
+          value={cat || undefined}
+          placeholder="选择分类"
+          allowClear
+          size="small"
+          style={{ width: '100%' }}
+          onChange={(v) => handleCategoryChange(record.id, v || '')}
+          options={categories.map((c) => ({ value: c.name, label: c.name }))}
+        />
+      ),
     },
     {
       title: '创建时间',
@@ -137,6 +224,75 @@ export default function KnowledgeList() {
   return (
     <div>
       <Title level={3}>📚 知识列表</Title>
+
+      {/* Categories Management */}
+      <Collapse
+        size="small"
+        style={{ marginBottom: 16 }}
+        items={[{
+          key: 'cats',
+          label: <span><TagsOutlined /> 分类管理（{categories.length} 个分类）</span>,
+          children: (
+            <div>
+              <Space wrap style={{ marginBottom: 12 }}>
+                {categories.map((cat) => (
+                  <Tag
+                    key={cat.id}
+                    closable
+                    color="blue"
+                    onClose={(e) => {
+                      e.preventDefault();
+                      handleDeleteCategory(cat.id);
+                    }}
+                    style={{ cursor: 'default', fontSize: 13, padding: '4px 10px' }}
+                  >
+                    <EditOutlined
+                      style={{ marginRight: 4, cursor: 'pointer' }}
+                      onClick={() => {
+                        setEditingCat(cat);
+                        setCatInputValue(cat.name);
+                        setCatModalOpen(true);
+                      }}
+                    />
+                    {cat.name}
+                  </Tag>
+                ))}
+              </Space>
+              <Button
+                size="small"
+                type="dashed"
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  setEditingCat(null);
+                  setCatInputValue('');
+                  setCatModalOpen(true);
+                }}
+              >
+                添加分类
+              </Button>
+            </div>
+          ),
+        }]}
+      />
+
+      {/* Add/Edit Category Modal */}
+      <Modal
+        title={editingCat ? '编辑分类' : '添加分类'}
+        open={catModalOpen}
+        onOk={editingCat ? handleEditCategory : handleAddCategory}
+        onCancel={() => { setCatModalOpen(false); setEditingCat(null); setCatInputValue(''); }}
+        okText="确定"
+        cancelText="取消"
+      >
+        <Input
+          placeholder="分类名称"
+          value={catInputValue}
+          onChange={(e) => setCatInputValue(e.target.value)}
+          onPressEnter={editingCat ? handleEditCategory : handleAddCategory}
+          maxLength={20}
+          showCount
+        />
+      </Modal>
 
       <Space style={{ marginBottom: 16 }} wrap>
         <Search

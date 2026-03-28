@@ -136,6 +136,8 @@ export async function agentRoutes(
       // Stream response
       let fullContent = '';
       let usedFallback = false;
+      let totalTokens = 0;
+      const chatStartTime = Date.now();
       try {
         for await (const token of llm.chatStream(messages, options)) {
           fullContent += token;
@@ -151,6 +153,7 @@ export async function agentRoutes(
 
         // Record token usage from non-streaming fallback (has exact usage)
         if (response.usage) {
+          totalTokens = response.usage.totalTokens;
           recordTokenUsage({
             model: options?.model || info.model,
             provider_name: info.providerName,
@@ -162,27 +165,30 @@ export async function agentRoutes(
         }
       }
 
+      const chatTimeMs = Date.now() - chatStartTime;
+
       // For streaming, estimate token usage since we don't get exact counts
       if (!usedFallback) {
         const promptText = messages.map(m => m.content).join('\n');
         const estimatedPromptTokens = estimateTokens(promptText);
         const estimatedCompletionTokens = estimateTokens(fullContent);
+        totalTokens = estimatedPromptTokens + estimatedCompletionTokens;
         recordTokenUsage({
           model: options?.model || info.model,
           provider_name: info.providerName,
           prompt_tokens: estimatedPromptTokens,
           completion_tokens: estimatedCompletionTokens,
-          total_tokens: estimatedPromptTokens + estimatedCompletionTokens,
+          total_tokens: totalTokens,
           call_type: 'chat',
         });
       }
 
-      // Save assistant message
+      // Save assistant message with usage info
       const sourceIds = ragResult.sources.map((s) => s.id);
-      await addChatMessage(sessionId, 'assistant', fullContent, sourceIds.length > 0 ? sourceIds : undefined);
+      await addChatMessage(sessionId, 'assistant', fullContent, sourceIds.length > 0 ? sourceIds : undefined, totalTokens, chatTimeMs);
 
-      // Send done event
-      sseWrite(reply, { type: 'done', data: { session_id: sessionId } });
+      // Send done event with usage info
+      sseWrite(reply, { type: 'done', data: { session_id: sessionId, tokens: totalTokens, time_ms: chatTimeMs } });
       reply.raw.end();
     } catch (err: any) {
       console.error('[Agent] Chat error:', err);

@@ -74,13 +74,15 @@ export async function addChatMessage(
   sessionId: string,
   role: 'user' | 'assistant',
   content: string,
-  sources?: string[]
+  sources?: string[],
+  tokens?: number,
+  timeMs?: number,
 ): Promise<ChatMessage> {
   const db = await getDb();
   const id = nanoid();
   db.run(
-    `INSERT INTO chat_messages (id, session_id, role, content, sources) VALUES (?, ?, ?, ?, ?)`,
-    [id, sessionId, role, content, sources ? JSON.stringify(sources) : null]
+    `INSERT INTO chat_messages (id, session_id, role, content, sources, tokens, time_ms) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, sessionId, role, content, sources ? JSON.stringify(sources) : null, tokens || 0, timeMs || 0]
   );
   saveDb();
   await updateChatSessionTimestamp(sessionId);
@@ -89,7 +91,9 @@ export async function addChatMessage(
     session_id: sessionId,
     role,
     content,
-    sources: sources || null,
+    sources: null,
+    tokens: tokens || 0,
+    time_ms: timeMs || 0,
     created_at: new Date().toISOString(),
   };
 }
@@ -101,12 +105,55 @@ export async function getMessagesBySession(sessionId: string): Promise<ChatMessa
     [sessionId]
   );
   if (res.length === 0) return [];
-  return res[0].values.map((row) => ({
-    id: row[0] as string,
-    session_id: row[1] as string,
-    role: row[2] as 'user' | 'assistant',
-    content: row[3] as string,
-    sources: row[4] ? JSON.parse(row[4] as string) : null,
-    created_at: row[5] as string,
+
+  // Collect all source IDs for batch lookup
+  const allSourceIds = new Set<string>();
+  const rawMessages = res[0].values.map((row) => {
+    const raw = row[4] ? JSON.parse(row[4] as string) : null;
+    if (Array.isArray(raw)) {
+      raw.forEach((s: any) => allSourceIds.add(typeof s === 'string' ? s : s.id));
+    }
+    return {
+      id: row[0] as string,
+      session_id: row[1] as string,
+      role: row[2] as 'user' | 'assistant',
+      content: row[3] as string,
+      sources_raw: raw,
+      created_at: row[5] as string,
+      tokens: (row[6] as number) || 0,
+      time_ms: (row[7] as number) || 0,
+    };
+  });
+
+  // Batch resolve source IDs to { id, title }
+  const titleMap = new Map<string, string>();
+  if (allSourceIds.size > 0) {
+    const placeholders = Array.from(allSourceIds).map(() => '?').join(',');
+    const titleRes = db.exec(
+      `SELECT id, title FROM knowledge_items WHERE id IN (${placeholders})`,
+      Array.from(allSourceIds),
+    );
+    if (titleRes.length > 0) {
+      for (const row of titleRes[0].values) {
+        titleMap.set(row[0] as string, row[1] as string);
+      }
+    }
+  }
+
+  // Resolve sources in each message
+  return rawMessages.map((m) => ({
+    id: m.id,
+    session_id: m.session_id,
+    role: m.role,
+    content: m.content,
+    sources: m.sources_raw
+      ? m.sources_raw.map((s: any) => {
+          const id = typeof s === 'string' ? s : s.id;
+          return { id, title: titleMap.get(id) || s.title || '已删除' };
+        })
+      : null,
+    created_at: m.created_at,
+    tokens: m.tokens,
+    time_ms: m.time_ms,
   }));
 }

@@ -52,8 +52,8 @@ export async function providerRoutes(app: FastifyInstance) {
       model?: string;
     };
 
-    // If api_key is masked (all asterisks), don't update it
-    if (body.api_key && /^\*+$/.test(body.api_key)) {
+    // If api_key is masked (contains ****), don't update it
+    if (body.api_key && body.api_key.includes('****')) {
       delete body.api_key;
     }
 
@@ -94,20 +94,35 @@ export async function providerRoutes(app: FastifyInstance) {
   // Test a provider connection
   app.post('/api/providers/test', async (req, reply) => {
     const body = req.body as {
+      id?: string;  // optional: if given, use stored key from DB
       provider_type: 'openai' | 'claude' | 'custom';
       api_key: string;
       base_url: string;
       model: string;
     };
 
-    if (!body.provider_type || !body.api_key || !body.base_url || !body.model) {
+    if (!body.provider_type || !body.base_url || !body.model) {
       return reply.status(400).send({ error: '所有字段都是必填项' });
+    }
+
+    // If api_key is masked, try to get real key from DB
+    let apiKey = body.api_key;
+    if (body.api_key && body.api_key.includes('****') && body.id) {
+      const { getProviderById } = await import('../db/providerRepo');
+      const stored = await getProviderById(body.id);
+      if (stored) {
+        apiKey = stored.api_key;
+      }
+    }
+
+    if (!apiKey) {
+      return reply.status(400).send({ error: 'API Key 不能为空' });
     }
 
     try {
       const llm = createLLMProvider({
         provider_type: body.provider_type,
-        api_key: body.api_key,
+        api_key: apiKey,
         base_url: body.base_url,
         model: body.model,
       });

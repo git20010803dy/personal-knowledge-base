@@ -47,16 +47,20 @@ interface ReviewItemWithQuestions {
 
 type Phase = 'loading' | 'main' | 'review' | 'result';
 
-// ─── Constants ───────────────────────────────────────────────────────
-
-const CATEGORIES = ['全部', '历史', '地理', '文学', '成语', '诗词', '哲学', '科学', '数码', '常识', '其他'];
+interface CategoryOption {
+  name: string;
+  hasQuestions: boolean;
+}
 
 // ─── Component ───────────────────────────────────────────────────────
 
 const Review: React.FC = () => {
   const [phase, setPhase] = useState<Phase>('loading');
   const [stats, setStats] = useState<ReviewStats | null>(null);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
+  const [missingCount, setMissingCount] = useState(0);
+  const [generating, setGenerating] = useState(false);
 
   // Review session state
   const [queue, setQueue] = useState<Array<{ item: ReviewItemWithQuestions; question: PreGeneratedQuestion }>>([]);
@@ -75,13 +79,34 @@ const Review: React.FC = () => {
   async function loadData() {
     setPhase('loading');
     try {
-      const statsRes = await axios.get('/api/review/stats');
+      const [statsRes, catsRes, missingRes] = await Promise.all([
+        axios.get('/api/review/stats'),
+        axios.get('/api/review/categories'),
+        axios.get('/api/review/missing'),
+      ]);
       setStats(statsRes.data);
+      setCategories(catsRes.data);
+      setMissingCount(missingRes.data.count || 0);
       setPhase('main');
     } catch (err) {
       console.error('Failed to load review data:', err);
       message.error('加载复习数据失败');
       setPhase('main');
+    }
+  }
+
+  async function handleGenerate() {
+    setGenerating(true);
+    try {
+      const res = await axios.post('/api/review/generate');
+      const { generated, failed, total } = res.data;
+      message.success(`生成完成：成功 ${generated}/${total}${failed > 0 ? `，失败 ${failed}` : ''}`);
+      await loadData();
+    } catch (err) {
+      console.error('Generate failed:', err);
+      message.error('生成题目失败');
+    } finally {
+      setGenerating(false);
     }
   }
 
@@ -206,14 +231,25 @@ const Review: React.FC = () => {
     return (
       <Card title="📚 选择分类" style={{ marginBottom: 24 }}>
         <div style={{ marginBottom: 12 }}>
-          {CATEGORIES.map((cat) => (
+          {categories.map((cat) => (
             <Tag
-              key={cat}
-              color={selectedCategory === cat ? 'blue' : 'default'}
-              style={{ cursor: 'pointer', marginBottom: 4, fontSize: 14, padding: '4px 12px' }}
-              onClick={() => setSelectedCategory(cat)}
+              key={cat.name}
+              color={selectedCategory === cat.name ? 'blue' : cat.hasQuestions ? 'default' : ''}
+              style={{
+                cursor: cat.hasQuestions || cat.name === '全部' ? 'pointer' : 'not-allowed',
+                marginBottom: 4,
+                fontSize: 14,
+                padding: '4px 12px',
+                opacity: cat.hasQuestions || cat.name === '全部' ? 1 : 0.4,
+              }}
+              onClick={() => {
+                if (cat.hasQuestions || cat.name === '全部') {
+                  setSelectedCategory(cat.name);
+                }
+              }}
             >
-              {cat}
+              {cat.name}
+              {cat.hasQuestions && cat.name !== '全部' ? '' : cat.name !== '全部' ? ' (空)' : ''}
             </Tag>
           ))}
         </div>
@@ -393,6 +429,28 @@ const Review: React.FC = () => {
     <div>
       <h2 style={{ marginBottom: 24 }}>📚 复习中心</h2>
       {renderStatCards()}
+
+      {/* Missing questions alert */}
+      {missingCount > 0 && (
+        <Card style={{ marginBottom: 24, borderColor: '#faad14', backgroundColor: '#fffbe6' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <span style={{ fontSize: 16 }}>⚠️ 有 <b>{missingCount}</b> 个知识点尚未生成复习题目</span>
+              <div style={{ color: '#888', marginTop: 4, fontSize: 13 }}>
+                点击按钮为这些知识点批量生成选择题（需要 AI 模型，消耗 Token）
+              </div>
+            </div>
+            <Button
+              type="primary"
+              onClick={handleGenerate}
+              loading={generating}
+            >
+              批量生成题目
+            </Button>
+          </div>
+        </Card>
+      )}
+
       {renderCategoryFilter()}
     </div>
   );

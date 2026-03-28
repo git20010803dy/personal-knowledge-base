@@ -1,22 +1,14 @@
 /**
  * reviewQuestionService.ts - 题目预生成服务
  * 功能：LLM 生成选择题、存储到 review_questions 表、查询分类
- * 依赖：database, llm/index
- * 最后修改：2026-03-28 - 新增固定分类字段，替代动态 tags
+ * 依赖：database, llm/index, categoryService
+ * 最后修改：2026-03-28 - 分类改为从数据库读取，不再硬编码
  */
 import { nanoid } from 'nanoid';
 import { getDb, saveDb } from '../db/database';
 import { getActiveLLMProvider, recordTokenUsage } from './llm/index';
+import { getAllCategories } from './categoryService';
 import type { KnowledgeItem } from '@pkb/shared';
-
-// ─── 固定分类枚举 ─────────────────────────────────────────────────────
-
-export const REVIEW_CATEGORIES = [
-  '历史', '地理', '文学', '成语', '诗词',
-  '哲学', '科学', '数码', '常识', '其他',
-] as const;
-
-export type ReviewCategory = typeof REVIEW_CATEGORIES[number];
 
 export interface PreGeneratedQuestion {
   id: string;
@@ -25,12 +17,12 @@ export interface PreGeneratedQuestion {
   options: string[];
   correct_idx: number;
   explanation: string;
-  category: ReviewCategory;
+  category: string;
 }
 
 // ─── Prompt ──────────────────────────────────────────────────────────
 
-function getChoicePrompt(item: KnowledgeItem): string {
+async function getChoicePrompt(item: KnowledgeItem): Promise<string> {
   const typeMap: Record<string, string> = {
     classical_chinese: '文言文',
     idiom: '成语',
@@ -49,6 +41,10 @@ function getChoicePrompt(item: KnowledgeItem): string {
     contentSummary = item.content || item.raw_content || item.title;
   }
 
+  // 从数据库读取可用分类
+  const categories = await getAllCategories();
+  const categoryNames = categories.map((c) => c.name).join('、');
+
   return `你是一位知识复习出题专家。请根据以下${typeName}知识点，生成 3-5 道四选一选择题，并判断该知识点的领域分类。
 
 知识点标题：${item.title}
@@ -61,7 +57,7 @@ ${contentSummary}
 - 干扰项要有一定迷惑性，但不能模棱两可
 - 题目应考查对知识点核心内容的理解
 
-领域分类（只能选一个）：历史、地理、文学、成语、诗词、哲学、科学、数码、常识、其他
+领域分类（只能从以下列表中选一个）：${categoryNames}
 
 请严格按照以下 JSON 格式返回，不要添加任何其他文字：
 {
@@ -89,7 +85,7 @@ export async function generateAndStoreQuestions(item: KnowledgeItem): Promise<Pr
   }
 
   const llm = info.provider;
-  const prompt = getChoicePrompt(item);
+  const prompt = await getChoicePrompt(item);
 
   let response;
   try {
@@ -130,10 +126,10 @@ export async function generateAndStoreQuestions(item: KnowledgeItem): Promise<Pr
     return [];
   }
 
-  // Validate category
-  const category: ReviewCategory = REVIEW_CATEGORIES.includes(parsed.category as ReviewCategory)
-    ? (parsed.category as ReviewCategory)
-    : '其他';
+  // Validate category against database
+  const dbCategories = await getAllCategories();
+  const validNames = dbCategories.map((c) => c.name);
+  const category = validNames.includes(parsed.category || '') ? parsed.category! : '其他';
 
   // Validate & store
   const db = await getDb();
@@ -186,7 +182,7 @@ export async function getQuestionsForItem(itemId: string): Promise<PreGeneratedQ
     options: JSON.parse(row[3] as string),
     correct_idx: row[4] as number,
     explanation: row[5] as string,
-    category: (row[6] as ReviewCategory) || '其他',
+    category: (row[6] as string) || '其他',
   }));
 }
 
@@ -198,4 +194,66 @@ export async function getUsedCategories(): Promise<string[]> {
   const res = db.exec('SELECT DISTINCT category FROM review_questions WHERE category IS NOT NULL ORDER BY category');
   if (res.length === 0 || res[0].values.length === 0) return [];
   return res[0].values.map((row) => row[0] as string);
+}
+
+/**
+ * 获取还没有生成题目的知识条目
+ */
+export async function getItemsWithoutQuestions(): Promise<Array<{ id: string; title: string; type: string }>> {
+  const db = await getDb();
+  const res = db.exec(
+    `SELECT ki.id, ki.title, ki.type FROM knowledge_items ki
+     LEFT JOIN review_questions rq ON ki.id = rq.item_id
+     WHERE rq.id IS NULL`,
+  );
+  if (res.length === 0) return [];
+  return res[0].values.map((row) => ({
+    id: row[0] as string,
+    title: row[1] as string,
+    type: row[2] as string,
+  }));
+}
+
+/**
+ * 为所有缺少题目的知识点批量生成复习题
+ * @returns { generated: number, failed: number, total: number }
+ */
+export async function generateMissingQuestions(): Promise<{ generated: number; failed: number; total: number }> {
+  const items = await getItemsWithoutQuestions();
+  let generated = 0;
+  let failed = 0;
+
+  for (const item of items) {
+    try {
+      const db = await getDb();
+      const res = db.exec('SELECT * FROM knowledge_items WHERE id = ?', [item.id]);
+      if (res.length === 0 || res[0].values.length === 0) continue;
+
+      const row = res[0].values[0];
+      const knowledgeItem = {
+        id: row[0] as string,
+        title: row[1] as string,
+        content: row[2] as string,
+        raw_content: row[3] as string,
+        type: row[4] as any,
+        tags: JSON.parse((row[5] as string) || '[]'),
+        category: row[6] as string | null,
+        source_file: row[7] as string | null,
+        created_at: row[8] as string,
+        updated_at: row[9] as string,
+      };
+
+      const questions = await generateAndStoreQuestions(knowledgeItem);
+      if (questions.length > 0) {
+        generated++;
+      } else {
+        failed++;
+      }
+    } catch (e) {
+      console.error(`Failed to generate questions for: ${item.title}`, e);
+      failed++;
+    }
+  }
+
+  return { generated, failed, total: items.length };
 }

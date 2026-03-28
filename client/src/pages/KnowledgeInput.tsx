@@ -77,6 +77,7 @@ export default function KnowledgeInput() {
 
   // Single preview fallback
   const [previewResult, setPreviewResult] = useState<any>(null);
+  const [previewUsage, setPreviewUsage] = useState<{ total_tokens: number; time_ms: number } | null>(null);
 
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -112,6 +113,7 @@ export default function KnowledgeInput() {
     setIsSplitMode(false);
     setCheckedPieceIds(new Set());
     setPreviewResult(null);
+    setPreviewUsage(null);
     setRawContent('');
   };
 
@@ -137,9 +139,11 @@ export default function KnowledgeInput() {
         setSplitPieces(pieces);
         setIsSplitMode(true);
         setCheckedPieceIds(new Set(pieces.map((p: any) => p.id)));
+        setPreviewUsage(res._usage || null);
         message.success(`内容已拆分为 ${pieces.length} 个知识点，请选择保存方式`);
       } else if (pieces.length === 1) {
         setPreviewResult(pieces[0].processing);
+        setPreviewUsage(pieces[0].processing?._usage || res._usage || null);
         setSplitPieces([]);
         setIsSplitMode(false);
         message.success('预览成功');
@@ -905,6 +909,11 @@ export default function KnowledgeInput() {
               </Space>
             </div>
           </Card>
+          {previewUsage && (
+            <div style={{ marginTop: 8, color: '#888', fontSize: 13, textAlign: 'right' }}>
+              🔢 Token 消耗: <b>{previewUsage.total_tokens}</b> | ⏱️ 耗时: <b>{(previewUsage.time_ms / 1000).toFixed(1)}s</b>
+            </div>
+          )}
         </>
       )}
     </div>

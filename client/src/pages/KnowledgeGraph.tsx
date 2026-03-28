@@ -25,6 +25,8 @@ import {
   Divider,
   Slider,
   message,
+  Modal,
+  Descriptions,
 } from 'antd';
 import {
   SearchOutlined,
@@ -36,7 +38,7 @@ import {
   DownOutlined,
   UpOutlined,
 } from '@ant-design/icons';
-import { graphApi } from '../services/api';
+import { graphApi, knowledgeApi } from '../services/api';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -147,6 +149,8 @@ export default function KnowledgeGraph() {
   const [showLabels, setShowLabels] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [detailItem, setDetailItem] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [graphHeight, setGraphHeight] = useState(500);
 
   // Clustering state
@@ -236,12 +240,7 @@ export default function KnowledgeGraph() {
             border: '#fbbf24',
           },
         },
-        font: {
-          color: '#374151',
-          size: 13,
-          face: 'system-ui, -apple-system, sans-serif',
-          bold: { color: '#111827' },
-        },
+        font: undefined,  // 使用全局 options 中的 font 配置
         size: 20 + Math.min((node.importance || 0) * 8, 35),
         shape: 'dot',
         borderWidth: 3,
@@ -302,6 +301,14 @@ export default function KnowledgeGraph() {
     const options: Options = {
       nodes: {
         shape: 'dot',
+        font: {
+          color: '#1f2937',
+          size: 13,
+          face: 'system-ui, -apple-system, sans-serif',
+          strokeWidth: 2,
+          strokeColor: '#ffffff',
+          vadjust: 12,  // 正值 = 往下偏移
+        },
         scaling: {
           min: 16,
           max: 40,
@@ -472,6 +479,20 @@ export default function KnowledgeGraph() {
     }
   };
 
+  // ─── Detail fetch ──────────────────────────────────────────────
+
+  const handleViewDetail = async (id: string) => {
+    setDetailLoading(true);
+    try {
+      const res = await knowledgeApi.get(id);
+      setDetailItem(res.data);
+    } catch (err: any) {
+      message.error('加载知识详情失败');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
   // ─── Toolbar actions ───────────────────────────────────────────
 
   const handleZoomFit = () => networkRef.current?.fit({ animation: { duration: 400 } });
@@ -584,13 +605,15 @@ export default function KnowledgeGraph() {
           <Tooltip title="显示标签">
             <Switch checked={showLabels} onChange={(v) => {
               setShowLabels(v);
-              const nodes = nodesRef.current;
-              if (nodes && nodes.length > 0) {
-                const updates = nodes.getIds().map((id) => ({
-                  id,
-                  font: { size: v ? 13 : 0 },
-                }));
-                nodes.update(updates);
+              const net = networkRef.current;
+              if (net) {
+                net.setOptions({
+                  nodes: {
+                    font: {
+                      size: v ? 13 : 0,
+                    },
+                  },
+                });
               }
             }} checkedChildren="标签" unCheckedChildren="标签" />
           </Tooltip>
@@ -745,9 +768,80 @@ export default function KnowledgeGraph() {
                 <Text>{selectedNode.category}</Text>
               </Paragraph>
             )}
+
+            <Divider />
+            <Button
+              type="primary"
+              block
+              onClick={() => handleViewDetail(selectedNode.id)}
+              loading={detailLoading}
+            >
+              查看详情
+            </Button>
           </div>
         )}
       </Drawer>
+
+      {/* Knowledge detail modal */}
+      <Modal
+        title="知识详情"
+        open={!!detailItem}
+        onCancel={() => setDetailItem(null)}
+        footer={null}
+        width={860}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+      >
+        {detailItem && (
+          <div>
+            <Descriptions column={1} bordered size="small">
+              <Descriptions.Item label="标题">{detailItem.title}</Descriptions.Item>
+              <Descriptions.Item label="类型">
+                <Tag color={TYPE_COLORS[detailItem.type]}>
+                  {TYPE_LABELS[detailItem.type] || detailItem.type}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="标签">
+                {(typeof detailItem.tags === 'string'
+                  ? JSON.parse(detailItem.tags)
+                  : detailItem.tags
+                )?.map((t: string) => <Tag key={t}>{t}</Tag>) || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="分类">{detailItem.category || '-'}</Descriptions.Item>
+              <Descriptions.Item label="创建时间">
+                {detailItem.created_at ? new Date(detailItem.created_at).toLocaleString('zh-CN') : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="更新时间">
+                {detailItem.updated_at ? new Date(detailItem.updated_at).toLocaleString('zh-CN') : '-'}
+              </Descriptions.Item>
+            </Descriptions>
+
+            <div style={{ marginTop: 16 }}>
+              <Text strong>原始内容</Text>
+              <div style={{
+                maxHeight: 250, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                background: '#fafafa', padding: 12, borderRadius: 6, marginTop: 8,
+                border: '1px solid #f0f0f0', fontSize: 13, lineHeight: 1.8,
+              }}>
+                {detailItem.raw_content || '-'}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 16 }}>
+              <Text strong>结构化内容</Text>
+              <pre style={{
+                maxHeight: 350, overflow: 'auto', background: '#f6f8fa', padding: 12,
+                borderRadius: 6, marginTop: 8, border: '1px solid #f0f0f0',
+                fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              }}>
+                {detailItem.content ? (() => {
+                  try { return JSON.stringify(JSON.parse(detailItem.content), null, 2); }
+                  catch { return detailItem.content; }
+                })() : '-'}
+              </pre>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

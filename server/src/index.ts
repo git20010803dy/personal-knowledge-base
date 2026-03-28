@@ -10,7 +10,8 @@ import { KnowledgeService } from './services/knowledgeService';
 import { GraphService } from './services/graphService';
 import { ClusteringService } from './services/clusteringService';
 import { RagService } from './services/ragService';
-import { knowledgeRoutes, templateRoutes, agentRoutes, providerRoutes, graphRoutes, reviewRoutes, tokenRoutes } from './routes/index';
+import { knowledgeRoutes, templateRoutes, agentRoutes, providerRoutes, graphRoutes, reviewRoutes, tokenRoutes, categoryRoutes } from './routes/index';
+import { initDefaultCategories } from './services/categoryService';
 
 async function main() {
   const app = Fastify({ logger: true });
@@ -44,6 +45,9 @@ async function main() {
   // Initialize built-in templates
   await knowledgeService.initTemplates();
 
+  // Initialize default categories
+  await initDefaultCategories();
+
   // Register routes
   await app.register(async (instance) => {
     await knowledgeRoutes(instance, { repo: knowledgeRepo, service: knowledgeService, ragService });
@@ -65,6 +69,9 @@ async function main() {
   });
   await app.register(async (instance) => {
     await tokenRoutes(instance);
+  });
+  await app.register(async (instance) => {
+    await categoryRoutes(instance);
   });
 
   // Health check
