@@ -15,6 +15,10 @@ import {
   Progress,
   message,
   Spin,
+  Input,
+  Divider,
+  Alert,
+  Modal,
 } from 'antd';
 import {
   PlayCircleOutlined,
@@ -23,8 +27,16 @@ import {
   TrophyOutlined,
   BookOutlined,
   FireOutlined,
+  MessageOutlined,
+  GlobalOutlined,
+  SaveOutlined,
+  FileAddOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import axios from 'axios';
+import { reviewApi } from '../services/api';
 import type { ReviewStats } from '../../../shared/src/index';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -69,6 +81,15 @@ const Review: React.FC = () => {
   const [submitted, setSubmitted] = useState(false);
   const [totalAnswered, setTotalAnswered] = useState(0);
   const [totalCorrect, setTotalCorrect] = useState(0);
+
+  // Explain/chat state
+  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; tokens?: number; time_ms?: number }>>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [extendContent, setExtendContent] = useState('');
+  const [extendLoading, setExtendLoading] = useState(false);
+  const [extendSaving, setExtendSaving] = useState(false);
+  const [extendId, setExtendId] = useState<string | null>(null);
 
   // ─── Load data on mount ──────────────────────────────────────────
 
@@ -178,6 +199,164 @@ const Review: React.FC = () => {
     if (isCorrect) setTotalCorrect((prev) => prev + 1);
   }
 
+  // ─── Explain / Chat ────────────────────────────────────────────
+
+  function handleExplainSend(text?: string) {
+    const content = text || chatInput.trim();
+    if (!content || chatLoading) return;
+
+    const current = queue[currentIdx];
+    const newMessages = [...chatMessages, { role: 'user' as const, content }];
+    setChatMessages(newMessages);
+    setChatInput('');
+    setChatLoading(true);
+
+    reviewApi.explain(
+      {
+        question_id: current.question.id,
+        item_id: current.item.item_id,
+        messages: newMessages,
+        context_type: 'explanation',
+      },
+      // onToken
+      (token) => {
+        setChatMessages((prev) => {
+          const updated = [...prev];
+          if (updated.length > 0 && updated[updated.length - 1].role === 'assistant') {
+            updated[updated.length - 1] = {
+              ...updated[updated.length - 1],
+              content: updated[updated.length - 1].content + token,
+            };
+          } else {
+            updated.push({ role: 'assistant', content: token });
+          }
+          return updated;
+        });
+      },
+      // onDone
+      (data) => {
+        setChatLoading(false);
+        if (data.tokens) {
+          setChatMessages((prev) => {
+            const updated = [...prev];
+            if (updated.length > 0) {
+              updated[updated.length - 1] = {
+                ...updated[updated.length - 1],
+                tokens: data.tokens,
+                time_ms: data.time_ms,
+              };
+            }
+            return updated;
+          });
+        }
+      },
+      // onError
+      (err) => {
+        setChatLoading(false);
+        message.error('追问失败：' + err.message);
+      },
+    );
+  }
+
+  function handleOptionExplain(optionIdx: number) {
+    if (chatLoading) return;
+    const current = queue[currentIdx];
+    const optLetters = ['A', 'B', 'C', 'D'];
+    const questionText = current.question.question;
+    const prompt = `请解释${optLetters[optionIdx]}选项"${current.question.options[optionIdx]}"的含义`;
+
+    const newMessages = [...chatMessages, { role: 'user' as const, content: prompt }];
+    setChatMessages(newMessages);
+    setChatLoading(true);
+
+    reviewApi.explain(
+      {
+        question_id: current.question.id,
+        item_id: current.item.item_id,
+        messages: newMessages,
+        context_type: 'options',
+        option_index: optionIdx,
+      },
+      (token) => {
+        setChatMessages((prev) => {
+          const updated = [...prev];
+          if (updated.length > 0 && updated[updated.length - 1].role === 'assistant') {
+            updated[updated.length - 1] = {
+              ...updated[updated.length - 1],
+              content: updated[updated.length - 1].content + token,
+            };
+          } else {
+            updated.push({ role: 'assistant', content: token });
+          }
+          return updated;
+        });
+      },
+      (data) => {
+        setChatLoading(false);
+        if (data.tokens) {
+          setChatMessages((prev) => {
+            const updated = [...prev];
+            if (updated.length > 0) {
+              updated[updated.length - 1] = {
+                ...updated[updated.length - 1],
+                tokens: data.tokens,
+                time_ms: data.time_ms,
+              };
+            }
+            return updated;
+          });
+        }
+      },
+      (err) => {
+        setChatLoading(false);
+        message.error('解释失败：' + err.message);
+      },
+    );
+  }
+
+  function handleExtend() {
+    if (extendLoading) return;
+    const current = queue[currentIdx];
+    setExtendLoading(true);
+    setExtendContent('');
+    setExtendId(null);
+
+    reviewApi.explain(
+      {
+        question_id: current.question.id,
+        item_id: current.item.item_id,
+        messages: [{ role: 'user', content: '请为这个知识点生成延伸知识' }],
+        context_type: 'extend',
+      },
+      (token) => {
+        setExtendContent((prev) => prev + token);
+      },
+      (data) => {
+        setExtendLoading(false);
+        if (data.extension_id) setExtendId(data.extension_id);
+      },
+      (err) => {
+        setExtendLoading(false);
+        message.error('生成延伸知识失败：' + err.message);
+      },
+    );
+  }
+
+  async function handleSaveExtension(action: 'append' | 'create') {
+    if (!extendId || extendSaving) return;
+    setExtendSaving(true);
+    try {
+      const res = await reviewApi.saveExtension({ extension_id: extendId, action });
+      message.success(action === 'append' ? '已追加到当前知识点' : '已创建新知识点');
+      setExtendId(null);
+      setExtendContent('');
+    } catch (err: any) {
+      message.error('保存失败：' + err.message);
+    } finally {
+      setExtendSaving(false);
+    }
+  }
+
   // ─── Next question ──────────────────────────────────────────────
 
   function handleNext() {
@@ -187,6 +366,10 @@ const Review: React.FC = () => {
       setCurrentIdx((prev) => prev + 1);
       setSelectedAnswer(null);
       setSubmitted(false);
+      setChatMessages([]);
+      setChatInput('');
+      setExtendContent('');
+      setExtendId(null);
     }
   }
 
@@ -354,6 +537,130 @@ const Review: React.FC = () => {
               <div style={{ color: '#666', lineHeight: 1.6 }}>💡 {question.explanation}</div>
             )}
           </div>
+        )}
+
+        {/* ─── Explain Panel (after submit) ────────────────────── */}
+        {submitted && (
+          <Card size="small" style={{ marginTop: 16, borderColor: '#d9d9d9' }} title="💬 追问与延伸">
+            {/* Chat messages */}
+            {chatMessages.length > 0 && (
+              <div style={{ maxHeight: 300, overflow: 'auto', marginBottom: 12, padding: '8px 0' }}>
+                {chatMessages.map((msg, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      marginBottom: 8,
+                      textAlign: msg.role === 'user' ? 'right' : 'left',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'inline-block',
+                        maxWidth: '85%',
+                        padding: '8px 12px',
+                        borderRadius: 8,
+                        backgroundColor: msg.role === 'user' ? '#e6f7ff' : '#f5f5f5',
+                        textAlign: 'left',
+                      }}
+                    >
+                      {msg.role === 'assistant' ? (
+                        <div>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                          {msg.tokens ? (
+                            <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>
+                              📊 {msg.tokens} tokens | {msg.time_ms}ms
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span>{msg.content}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {chatLoading && chatMessages.length > 0 && chatMessages[chatMessages.length - 1]?.role === 'user' && (
+                  <div style={{ color: '#999', fontSize: 13 }}>
+                    <Spin size="small" style={{ marginRight: 8 }} />思考中...
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Quick buttons */}
+            <Space wrap style={{ marginBottom: 8 }}>
+              {question.options.map((opt, idx) => {
+                if (idx === question.correct_idx) return null;
+                return (
+                  <Button
+                    key={idx}
+                    size="small"
+                    icon={<MessageOutlined />}
+                    onClick={() => handleOptionExplain(idx)}
+                    disabled={chatLoading}
+                  >
+                    {optionLetters[idx]}选项解释
+                  </Button>
+                );
+              })}
+              <Button
+                size="small"
+                icon={<GlobalOutlined />}
+                onClick={handleExtend}
+                disabled={extendLoading}
+                type="dashed"
+              >
+                🌍 延伸知识
+              </Button>
+            </Space>
+
+            {/* Chat input */}
+            <Input.Search
+              placeholder="追问解释内容，按回车发送..."
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onSearch={() => handleExplainSend()}
+              enterButton={<MessageOutlined />}
+              disabled={chatLoading}
+            />
+
+            {/* Extend content */}
+            {extendContent && (
+              <div style={{ marginTop: 12, padding: 12, borderRadius: 8, backgroundColor: '#f0f5ff', border: '1px solid #adc6ff' }}>
+                <div style={{ fontWeight: 'bold', marginBottom: 8 }}>🌍 延伸知识</div>
+                <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{extendContent}</ReactMarkdown>
+                </div>
+                {extendLoading ? (
+                  <div style={{ color: '#999', fontSize: 13, marginTop: 8 }}>
+                    <Spin size="small" style={{ marginRight: 8 }} />生成中...
+                  </div>
+                ) : (
+                  <Space style={{ marginTop: 8 }}>
+                    <Button
+                      size="small"
+                      type="primary"
+                      icon={<SaveOutlined />}
+                      onClick={() => handleSaveExtension('append')}
+                      loading={extendSaving}
+                    >
+                      追加到当前知识点
+                    </Button>
+                    <Button
+                      size="small"
+                      icon={<FileAddOutlined />}
+                      onClick={() => handleSaveExtension('create')}
+                      loading={extendSaving}
+                    >
+                      新建知识点
+                    </Button>
+                    <Button size="small" onClick={() => { setExtendContent(''); setExtendId(null); }}>
+                      不保存
+                    </Button>
+                  </Space>
+                )}
+              </div>
+            )}
+          </Card>
         )}
 
         {/* Actions */}

@@ -10,6 +10,7 @@ import {
   RobotOutlined,
   ReadOutlined,
   PieChartOutlined,
+  BulbOutlined,
 } from "@ant-design/icons";
 import KnowledgeInput from "./pages/KnowledgeInput";
 import KnowledgeList from "./pages/KnowledgeList";
@@ -19,6 +20,7 @@ import ProviderManagement from "./pages/ProviderManagement";
 import AgentChat from "./pages/AgentChat";
 import Review from "./pages/Review";
 import TokenUsage from "./pages/TokenUsage";
+import PromptManagement from "./pages/PromptManagement";
 
 const { Header, Sider, Content } = Layout;
 
@@ -52,6 +54,11 @@ const menuItems = [
     key: "/templates",
     icon: <AppstoreOutlined />,
     label: "模板管理",
+  },
+  {
+    key: "/prompts",
+    icon: <BulbOutlined />,
+    label: "Prompt 管理",
   },
   {
     key: "/providers",
@@ -116,6 +123,7 @@ export default function App() {
               <Route path="/chat" element={<AgentChat />} />
               <Route path="/review" element={<Review />} />
               <Route path="/templates" element={<TemplateManagement />} />
+              <Route path="/prompts" element={<PromptManagement />} />
               <Route path="/providers" element={<ProviderManagement />} />
               <Route path="/tokens" element={<TokenUsage />} />
             </Routes>

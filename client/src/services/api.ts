@@ -57,7 +57,7 @@ export const knowledgeApi = {
       body: JSON.stringify(data),
     }),
 
-  savePieces: (data: { pieces: Array<{ raw_content: string; title?: string; type?: string; keywords: string[]; tags: string[]; category?: string }>; merge: boolean }) =>
+  savePieces: (data: { pieces: Array<{ raw_content: string; title?: string; type?: string; keywords: string[]; tags: string[]; category?: string; content?: Record<string, unknown> }>; merge: boolean }) =>
     request<any>('/knowledge/save-pieces', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -217,19 +217,27 @@ export const graphApi = {
 
 // Review API
 export const reviewApi = {
-  start: (count?: number) =>
-    request<any>('/review/start', {
-      method: 'POST',
-      body: JSON.stringify({ count }),
-    }),
+  start: (count?: number, category?: string) => {
+    const params: Record<string, string> = {};
+    if (count) params.count = String(count);
+    if (category) params.category = category;
+    const query = new URLSearchParams(params).toString();
+    return request<any>(`/review/start${query ? `?${query}` : ''}`);
+  },
 
-  submit: (data: { review_id: string; question_index: number; user_answer: string }) =>
+  submit: (data: { question_id: string; item_id: string; selected_idx: number }) =>
     request<any>('/review/submit', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  getToday: () => request<any>('/review/today'),
+  getStats: () => request<any>('/review/stats'),
+
+  getCategories: () => request<any>('/review/categories'),
+
+  getMissing: () => request<any>('/review/missing'),
+
+  generate: () => request<any>('/review/generate', { method: 'POST' }),
 
   getHistory: (page?: number, pageSize?: number) => {
     const params: Record<string, string> = {};
@@ -238,6 +246,64 @@ export const reviewApi = {
     const query = new URLSearchParams(params).toString();
     return request<any>(`/review/history${query ? `?${query}` : ''}`);
   },
+
+  // SSE explain - returns EventSource-like streaming
+  explain: (
+    data: {
+      question_id: string;
+      item_id: string;
+      messages: Array<{ role: string; content: string }>;
+      context_type: 'explanation' | 'options' | 'extend';
+      option_index?: number;
+    },
+    onToken: (token: string) => void,
+    onDone: (data: { tokens: number; time_ms: number; extension_id?: string; error?: boolean }) => void,
+    onError: (err: Error) => void,
+  ) => {
+    fetch(`${API_BASE}/review/explain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('No reader');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const pump = (): Promise<void> => {
+          return reader.read().then(({ done, value }) => {
+            if (done) return;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const parsed = JSON.parse(line.slice(6));
+                  if (parsed.type === 'token') onToken(parsed.data);
+                  else if (parsed.type === 'done') onDone(parsed.data);
+                  else if (parsed.type === 'error') onError(new Error(parsed.data));
+                } catch {}
+              }
+            }
+            return pump();
+          });
+        };
+        return pump();
+      })
+      .catch(onError);
+  },
+
+  // Save extension
+  saveExtension: (data: { extension_id: string; action: 'append' | 'create' }) =>
+    request<any>('/review/extend/save', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 };
 
 // Token Usage API
@@ -250,4 +316,24 @@ export const tokenApi = {
   getSummary: () => request<any>('/tokens/summary'),
 
   getTotal: () => request<any>('/tokens/total'),
+};
+
+// System Prompt API
+export const promptApi = {
+  list: (category?: string) => {
+    const params: Record<string, string> = {};
+    if (category) params.category = category;
+    const query = new URLSearchParams(params).toString();
+    return request<any>(`/prompts${query ? `?${query}` : ''}`);
+  },
+
+  get: (key: string) => request<any>(`/prompts/${key}`),
+
+  update: (key: string, data: { prompt?: string; description?: string; data_flow?: string; logic_flow?: string; is_active?: boolean }) =>
+    request<any>(`/prompts/${key}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  reset: () => request<any>('/prompts/reset', { method: 'POST' }),
 };

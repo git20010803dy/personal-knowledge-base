@@ -10,7 +10,7 @@ import { KnowledgeService } from './services/knowledgeService';
 import { GraphService } from './services/graphService';
 import { ClusteringService } from './services/clusteringService';
 import { RagService } from './services/ragService';
-import { knowledgeRoutes, templateRoutes, agentRoutes, providerRoutes, graphRoutes, reviewRoutes, tokenRoutes, categoryRoutes } from './routes/index';
+import { knowledgeRoutes, templateRoutes, agentRoutes, providerRoutes, graphRoutes, reviewRoutes, tokenRoutes, categoryRoutes, promptRoutes } from './routes/index';
 import { initDefaultCategories } from './services/categoryService';
 
 async function main() {
@@ -72,6 +72,9 @@ async function main() {
   });
   await app.register(async (instance) => {
     await categoryRoutes(instance);
+  });
+  await app.register(async (instance) => {
+    await promptRoutes(instance);
   });
 
   // Health check

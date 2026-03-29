@@ -174,6 +174,7 @@ export default function KnowledgeInput() {
           keywords: p.processing?.keywords || [],
           tags: p.processing?.tags || [],
           category: p.processing?.category,
+          content: p.processing?.content,  // full structured content from LLM
         })),
         merge: true,
       });
@@ -210,6 +211,7 @@ export default function KnowledgeInput() {
           keywords: p.processing?.keywords || [],
           tags: p.processing?.tags || [],
           category: p.processing?.category,
+          content: p.processing?.content,
         })),
         merge: false,
       });
@@ -265,6 +267,7 @@ export default function KnowledgeInput() {
               keywords: pieces[0].processing?.keywords || [],
               tags: pieces[0].processing?.tags || [],
               category: pieces[0].processing?.category,
+              content: pieces[0].processing?.content,
             }],
             merge: false,
           });

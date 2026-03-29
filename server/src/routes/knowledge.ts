@@ -280,6 +280,12 @@ export async function knowledgeRoutes(
     }
 
     try {
+      // Validate categories against database
+      const { getAllCategories } = await import('../services/categoryService');
+      const validCategories = await getAllCategories();
+      const validNames = new Set(validCategories.map(c => c.name));
+      const validateCategory = (cat?: string) => cat && validNames.has(cat) ? cat : null;
+
       const items: any[] = [];
 
       if (body.merge && body.pieces.length > 1) {
@@ -316,16 +322,18 @@ export async function knowledgeRoutes(
         // Use first piece's title or generate combined
         const mergedTitle = pieces[0].title || pieces.map(p => p.title || p.raw_content.substring(0, 20)).join(' / ');
 
-        // Build merged content from processing results (each piece was already processed in preview)
-        const mergedContent = {
-          merged: true,
-          pieces: pieces.map(p => ({
-            title: p.title,
-            type: p.type,
-            keywords: p.keywords,
-            tags: p.tags,
-          })),
-        };
+        // Build merged content from processing results (use full content if available)
+        const mergedContent = pieces[0].content
+          ? { merged: true, pieces: pieces.map(p => p.content) }
+          : {
+              merged: true,
+              pieces: pieces.map(p => ({
+                title: p.title,
+                type: p.type,
+                keywords: p.keywords,
+                tags: p.tags,
+              })),
+            };
 
         const db = await getDb();
         const itemId = nanoid();
@@ -338,7 +346,7 @@ export async function knowledgeRoutes(
           raw_content: mergedRawContent,
           type: pieces[0].type || 'general',
           tags: JSON.stringify(mergedTags),
-          category: pieces[0].category || null,
+          category: validateCategory(pieces[0].category),
           source_file: null,
           created_at: now,
           updated_at: now,
@@ -374,11 +382,11 @@ export async function knowledgeRoutes(
           const item: any = {
             id: itemId,
             title: piece.title || piece.raw_content.substring(0, 50),
-            content: JSON.stringify({ raw: piece.raw_content, keywords: piece.keywords, tags: piece.tags }),
+            content: JSON.stringify(piece.content || { raw: piece.raw_content, keywords: piece.keywords, tags: piece.tags }),
             raw_content: piece.raw_content,
             type: pieceType,
             tags: JSON.stringify(piece.tags || []),
-            category: piece.category || null,
+            category: validateCategory(piece.category),
             source_file: null,
             created_at: now,
             updated_at: now,

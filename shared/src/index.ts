@@ -273,6 +273,7 @@ export interface SavePieceRequest {
   keywords: string[];
   tags: string[];
   category?: string;
+  content?: Record<string, unknown>;  // full structured content from LLM processing
 }
 
 // Clustering types
