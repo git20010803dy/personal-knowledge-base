@@ -41,25 +41,33 @@ async function getChoicePrompt(item: KnowledgeItem): Promise<string> {
     contentSummary = item.content || item.raw_content || item.title;
   }
 
-  // 从数据库读取可用分类
-  const categories = await getAllCategories();
-  const categoryNames = categories.map((c) => c.name).join('、');
+  // 如果知识点已有类别，直接用，不在 prompt 中要求 LLM 判断
+  const hasCategory = item.category && item.category.trim() !== '';
 
-  return `你是一位知识复习出题专家。请根据以下${typeName}知识点，生成 3-5 道四选一选择题，并判断该知识点的领域分类。
+  let categorySection = '';
+  let responseFormat = '';
 
-知识点标题：${item.title}
-类型：${typeName}
-内容：
-${contentSummary}
+  if (hasCategory) {
+    categorySection = '';
+    responseFormat = `请严格按照以下 JSON 格式返回，不要添加任何其他文字：
+{
+  "questions": [
+    {
+      "question": "题目文字",
+      "options": ["选项A内容", "选项B内容", "选项C内容", "选项D内容"],
+      "correct_idx": 0,
+      "explanation": "为什么这个答案正确，简要说明"
+    }
+  ]
+}`;
+  } else {
+    // 知识点无类别，让 LLM 判断
+    const categories = await getAllCategories();
+    const categoryNames = categories.map((c) => c.name).join('、');
+    categorySection = `
 
-出题要求：
-- 每道题 4 个选项，只有 1 个正确答案
-- 干扰项要有一定迷惑性，但不能模棱两可
-- 题目应考查对知识点核心内容的理解
-
-领域分类（只能从以下列表中选一个）：${categoryNames}
-
-请严格按照以下 JSON 格式返回，不要添加任何其他文字：
+领域分类（只能从以下列表中选一个）：${categoryNames}`;
+    responseFormat = `请严格按照以下 JSON 格式返回，不要添加任何其他文字：
 {
   "category": "领域分类",
   "questions": [
@@ -71,6 +79,21 @@ ${contentSummary}
     }
   ]
 }`;
+  }
+
+  return `你是一位知识复习出题专家。请根据以下${typeName}知识点，生成 3-5 道四选一选择题。
+
+知识点标题：${item.title}
+类型：${typeName}
+内容：
+${contentSummary}
+
+出题要求：
+- 每道题 4 个选项，只有 1 个正确答案
+- 干扰项要有一定迷惑性，但不能模棱两可
+- 题目应考查对知识点核心内容的理解${categorySection}
+
+${responseFormat}`;
 }
 
 // ─── 生成并存储 ─────────────────────────────────────────────────────
@@ -126,10 +149,13 @@ export async function generateAndStoreQuestions(item: KnowledgeItem): Promise<Pr
     return [];
   }
 
-  // Validate category against database
+  // 优先用知识点自身的类别；无类别时才用 LLM 的判断
   const dbCategories = await getAllCategories();
   const validNames = dbCategories.map((c) => c.name);
-  const category = validNames.includes(parsed.category || '') ? parsed.category! : '其他';
+  const hasItemCategory = item.category && item.category.trim() !== '';
+  const category = hasItemCategory
+    ? item.category!
+    : (validNames.includes(parsed.category || '') ? parsed.category! : '其他');
 
   // Validate & store
   const db = await getDb();
