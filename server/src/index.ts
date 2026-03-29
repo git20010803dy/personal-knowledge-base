@@ -9,6 +9,7 @@ import { KnowledgeService } from './services/knowledgeService';
 import { GraphService } from './services/graphService';
 import { ClusteringService } from './services/clusteringService';
 import { RagService } from './services/ragService';
+import { initSearchDb, closeSearchDb } from './services/searchService';
 import { knowledgeRoutes, agentRoutes, providerRoutes, graphRoutes, reviewRoutes, tokenRoutes, categoryRoutes, promptRoutes } from './routes/index';
 import { initDefaultCategories } from './services/categoryService';
 
@@ -27,6 +28,9 @@ async function main() {
 
   // Initialize database
   await getDb();
+
+  // Initialize search engine (FTS5)
+  await initSearchDb();
 
   // Initialize repositories
   const knowledgeRepo = createKnowledgeRepo();
@@ -82,6 +86,7 @@ async function main() {
   for (const signal of signals) {
     process.on(signal, async () => {
       app.log.info(`Received ${signal}, shutting down...`);
+      closeSearchDb();
       closeDb();
       await app.close();
       process.exit(0);
