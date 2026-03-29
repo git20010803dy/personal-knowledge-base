@@ -226,6 +226,7 @@ export async function rebuildAll(): Promise<void> {
  */
 export function closeSearchDb(): void {
   if (searchDb) {
+    searchDb.pragma('wal_checkpoint(TRUNCATE)');
     searchDb.close();
     searchDb = null;
   }

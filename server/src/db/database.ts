@@ -572,4 +572,12 @@ export function closeDb(): void {
     db.close();
     db = null;
   }
+
+  // 清理 sql.js 遗留的 WAL 文件（sql.js 不支持 PRAGMA wal_checkpoint）
+  try {
+    const walPath = config.dbPath + '-wal';
+    const shmPath = config.dbPath + '-shm';
+    if (existsSync(walPath)) writeFileSync(walPath, '');
+    if (existsSync(shmPath)) writeFileSync(shmPath, '');
+  } catch {}
 }
