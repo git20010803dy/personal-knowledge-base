@@ -19,6 +19,7 @@ import {
   Divider,
   Alert,
   Modal,
+  Collapse,
 } from 'antd';
 import {
   PlayCircleOutlined,
@@ -625,40 +626,55 @@ const Review: React.FC = () => {
 
             {/* Extend content */}
             {extendContent && (
-              <div style={{ marginTop: 12, padding: 12, borderRadius: 8, backgroundColor: '#f0f5ff', border: '1px solid #adc6ff' }}>
-                <div style={{ fontWeight: 'bold', marginBottom: 8 }}>🌍 延伸知识</div>
-                <div style={{ maxHeight: 200, overflow: 'auto' }}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{extendContent}</ReactMarkdown>
-                </div>
-                {extendLoading ? (
-                  <div style={{ color: '#999', fontSize: 13, marginTop: 8 }}>
-                    <Spin size="small" style={{ marginRight: 8 }} />生成中...
-                  </div>
-                ) : (
-                  <Space style={{ marginTop: 8 }}>
-                    <Button
-                      size="small"
-                      type="primary"
-                      icon={<SaveOutlined />}
-                      onClick={() => handleSaveExtension('append')}
-                      loading={extendSaving}
-                    >
-                      追加到当前知识点
-                    </Button>
-                    <Button
-                      size="small"
-                      icon={<FileAddOutlined />}
-                      onClick={() => handleSaveExtension('create')}
-                      loading={extendSaving}
-                    >
-                      新建知识点
-                    </Button>
-                    <Button size="small" onClick={() => { setExtendContent(''); setExtendId(null); }}>
-                      不保存
-                    </Button>
-                  </Space>
-                )}
-              </div>
+              <Collapse
+                style={{ marginTop: 12 }}
+                defaultActiveKey={extendLoading ? ['extend'] : []}
+                items={[{
+                  key: 'extend',
+                  label: (
+                    <span style={{ fontWeight: 'bold' }}>
+                      🌍 延伸知识
+                      {extendLoading && <Spin size="small" style={{ marginLeft: 8 }} />}
+                      {!extendLoading && <Tag color="blue" style={{ marginLeft: 8 }}>点击展开</Tag>}
+                    </span>
+                  ),
+                  children: (
+                    <div>
+                      <div style={{ maxHeight: 600, overflow: 'auto', padding: '4px 0' }}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{extendContent}</ReactMarkdown>
+                      </div>
+                      {extendLoading ? (
+                        <div style={{ color: '#999', fontSize: 13, marginTop: 8 }}>
+                          <Spin size="small" style={{ marginRight: 8 }} />生成中...
+                        </div>
+                      ) : (
+                        <Space style={{ marginTop: 12 }}>
+                          <Button
+                            size="small"
+                            type="primary"
+                            icon={<SaveOutlined />}
+                            onClick={() => handleSaveExtension('append')}
+                            loading={extendSaving}
+                          >
+                            追加到当前知识点
+                          </Button>
+                          <Button
+                            size="small"
+                            icon={<FileAddOutlined />}
+                            onClick={() => handleSaveExtension('create')}
+                            loading={extendSaving}
+                          >
+                            新建知识点
+                          </Button>
+                          <Button size="small" onClick={() => { setExtendContent(''); setExtendId(null); }}>
+                            不保存
+                          </Button>
+                        </Space>
+                      )}
+                    </div>
+                  ),
+                }]}
+              />
             )}
           </Card>
         )}

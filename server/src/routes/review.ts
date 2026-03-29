@@ -162,10 +162,19 @@ export async function reviewRoutes(app: FastifyInstance) {
       const correctIdx = row[2] as number;
       const explanation = row[3] as string;
 
-      // Load item title
+      // Load item data
       const itemRes = db.exec('SELECT title, content, raw_content FROM knowledge_items WHERE id = ?', [body.item_id]);
       const itemTitle = itemRes.length > 0 && itemRes[0].values.length > 0 ? (itemRes[0].values[0][0] as string) : '';
-      const itemContent = itemRes.length > 0 && itemRes[0].values.length > 0 ? (itemRes[0].values[0][1] as string || itemRes[0].values[0][2] as string || '') : '';
+      const itemStructured = itemRes.length > 0 && itemRes[0].values.length > 0 ? (itemRes[0].values[0][1] as string || '') : '';
+
+      // Context for prompt variable replacement
+      // explain/options: use structured content for richer context
+      // extend: use question + answer as the starting point
+      const optionLetters = ['A', 'B', 'C', 'D'];
+      const questionContext = `题目：${question}\n选项：${options.map((o, i) => `${optionLetters[i]}. ${o}`).join('\n')}\n正确答案：${optionLetters[correctIdx]}. ${options[correctIdx]}\n解释：${explanation || '无'}`;
+      const itemContentForPrompt = body.context_type === 'extend'
+        ? questionContext
+        : itemStructured.substring(0, 1000);
 
       // Get prompt template from DB
       const promptKey = body.context_type === 'options' ? 'review_options'
@@ -177,13 +186,12 @@ export async function reviewRoutes(app: FastifyInstance) {
       if (promptRecord) {
         systemPrompt = promptRecord.prompt;
         // Replace variables
-        const optionLetters = ['A', 'B', 'C', 'D'];
         systemPrompt = systemPrompt.replace(/\{\{question\}\}/g, question);
         systemPrompt = systemPrompt.replace(/\{\{optionLetters\}\}/g, optionLetters[correctIdx]);
         systemPrompt = systemPrompt.replace(/\{\{correctOption\}\}/g, options[correctIdx] || '');
         systemPrompt = systemPrompt.replace(/\{\{explanation\}\}/g, explanation || '无');
         systemPrompt = systemPrompt.replace(/\{\{itemTitle\}\}/g, itemTitle);
-        systemPrompt = systemPrompt.replace(/\{\{itemContent\}\}/g, itemContent.substring(0, 1000));
+        systemPrompt = systemPrompt.replace(/\{\{itemContent\}\}/g, itemContentForPrompt);
 
         if (body.context_type === 'options' && body.option_index !== undefined) {
           systemPrompt = systemPrompt.replace(/\{\{askedOptionLetter\}\}/g, optionLetters[body.option_index] || '');
@@ -192,12 +200,12 @@ export async function reviewRoutes(app: FastifyInstance) {
       } else {
         // Fallback prompts
         if (body.context_type === 'explanation') {
-          systemPrompt = `你是一个知识库复习助手。用户正在复习一道选择题，对题目的解释有疑问，请进一步说明。\n\n题目：${question}\n正确答案：${['A','B','C','D'][correctIdx]}. ${options[correctIdx]}\n原始解释：${explanation || '无'}\n\n请用简洁清晰的语言回答。保持在200字以内。`;
+          systemPrompt = `你是一个知识库复习助手。用户正在复习一道选择题，对题目的解释有疑问，请进一步说明。\n\n题目：${question}\n正确答案：${['A','B','C','D'][correctIdx]}. ${options[correctIdx]}\n原始解释：${explanation || '无'}\n知识点标题：${itemTitle}\n\n请用简洁清晰的语言回答。保持在200字以内。`;
         } else if (body.context_type === 'options') {
           const optIdx = body.option_index ?? 0;
           systemPrompt = `你是一个知识库复习助手。用户想了解某个选项为什么对或错。\n\n题目：${question}\n正确答案：${['A','B','C','D'][correctIdx]}. ${options[correctIdx]}\n用户询问的选项：${['A','B','C','D'][optIdx]}. ${options[optIdx]}\n\n请解释这个选项。保持在150字以内。`;
         } else {
-          systemPrompt = `你是一个知识库助手。用户希望了解更多背景知识。\n\n知识点：${itemTitle}\n内容：${itemContent.substring(0, 1000)}\n\n请进行知识延伸，用Markdown格式，500字以内。`;
+          systemPrompt = `你是一个知识库助手。用户希望了解更多背景知识。\n\n知识点：${itemTitle}\n原始内容：${itemContentForPrompt}\n\n请进行知识延伸，用Markdown格式，500字以内。`;
         }
       }
 

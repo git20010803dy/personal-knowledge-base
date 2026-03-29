@@ -8,9 +8,9 @@ import { getBuiltInTemplates, detectType, renderTemplate, parseJsonResponse } fr
 import { config } from '../config';
 import type { KnowledgeItem, KnowledgeType, ProcessingResult, UploadedFile, KnowledgeLink } from '@pkb/shared';
 import type { KnowledgeRepository } from '../db/knowledgeRepo';
-import type { TemplateRepository } from '../db/templateRepo';
 import { getDb, saveDb } from '../db/database';
 import { generateAndStoreQuestions } from './reviewQuestionService';
+import { getPromptByKey } from '../db/promptRepo';
 
 const RELATION_TYPES = ['相关', '包含', '因果', '对比', '同源'] as const;
 
@@ -32,12 +32,10 @@ import type { LLMCallOptions } from '@pkb/shared';
 export class KnowledgeService {
   private llm: LLMProvider | null;
   private repo: KnowledgeRepository;
-  private templateRepo: TemplateRepository;
 
-  constructor(llm: LLMProvider | null, repo: KnowledgeRepository, templateRepo: TemplateRepository) {
+  constructor(llm: LLMProvider | null, repo: KnowledgeRepository) {
     this.llm = llm;
     this.repo = repo;
-    this.templateRepo = templateRepo;
   }
 
   /**
@@ -54,13 +52,8 @@ export class KnowledgeService {
   }
 
   async initTemplates(): Promise<void> {
-    const builtIns = getBuiltInTemplates();
-    for (const tmpl of builtIns) {
-      const existing = await this.templateRepo.findByType(tmpl.type);
-      if (!existing) {
-        await this.templateRepo.create(tmpl);
-      }
-    }
+    // Templates are now managed via system_prompts table (initialized in migration v9)
+    // No-op: system_prompts are auto-initialized in database.ts migration
   }
 
   async processTextInput(rawContent: string, type?: KnowledgeType, options?: LLMCallOptions): Promise<ProcessingResult & { _usage?: { total_tokens: number; time_ms: number } }> {
@@ -68,7 +61,10 @@ export class KnowledgeService {
     const info = await this.getLLM();
     const llm = info.provider;
     const detectedType = type || detectType(rawContent);
-    const template = await this.templateRepo.findByType(detectedType);
+
+    // Load prompt from system_prompts table
+    const promptKey = `knowledge_${detectedType}`;
+    const promptRecord = await getPromptByKey(promptKey);
 
     // Truncate for LLM if too long (keep within context window limits)
     const MAX_LLM_INPUT = 8000; // ~2000 tokens safety margin
@@ -76,7 +72,13 @@ export class KnowledgeService {
       ? rawContent.substring(0, MAX_LLM_INPUT) + '\n\n[...内容过长，已截断...]'
       : rawContent;
 
-    const templateStr = template?.template || getBuiltInTemplates().find((t) => t.type === detectedType)?.template || '';
+    let templateStr = '';
+    if (promptRecord) {
+      templateStr = promptRecord.prompt;
+    } else {
+      // Fallback to built-in templates
+      templateStr = getBuiltInTemplates().find((t) => t.type === detectedType)?.template || '';
+    }
     const prompt = renderTemplate(templateStr, { raw_content: llmInput });
 
     const response = await llm.chat([{ role: 'user', content: prompt }], options);

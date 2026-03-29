@@ -82,26 +82,6 @@ export const knowledgeApi = {
   },
 };
 
-// Template API
-export const templateApi = {
-  list: () => request<any>('/templates'),
-  get: (id: string) => request<any>(`/templates/${id}`),
-  create: (data: { type: string; name: string; template: string; is_default?: boolean }) =>
-    request<any>('/templates', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  update: (id: string, data: Record<string, unknown>) =>
-    request<any>(`/templates/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  delete: (id: string) =>
-    request<any>(`/templates/${id}`, { method: 'DELETE' }),
-  reset: () =>
-    request<any>('/templates/reset', { method: 'POST' }),
-};
-
 // Agent API
 export const agentApi = {
   classify: (text: string) =>

@@ -4,13 +4,12 @@ import multipart from '@fastify/multipart';
 import { config } from './config';
 import { getDb, closeDb } from './db/database';
 import { createKnowledgeRepo } from './db/knowledgeRepo';
-import { createTemplateRepo } from './db/templateRepo';
 import { OpenAIAdapter } from './services/llm/index';
 import { KnowledgeService } from './services/knowledgeService';
 import { GraphService } from './services/graphService';
 import { ClusteringService } from './services/clusteringService';
 import { RagService } from './services/ragService';
-import { knowledgeRoutes, templateRoutes, agentRoutes, providerRoutes, graphRoutes, reviewRoutes, tokenRoutes, categoryRoutes, promptRoutes } from './routes/index';
+import { knowledgeRoutes, agentRoutes, providerRoutes, graphRoutes, reviewRoutes, tokenRoutes, categoryRoutes, promptRoutes } from './routes/index';
 import { initDefaultCategories } from './services/categoryService';
 
 async function main() {
@@ -31,13 +30,12 @@ async function main() {
 
   // Initialize repositories
   const knowledgeRepo = createKnowledgeRepo();
-  const templateRepo = createTemplateRepo();
 
   // Initialize LLM adapter
   const llm = new OpenAIAdapter(config.llm);
 
   // Initialize services
-  const knowledgeService = new KnowledgeService(llm, knowledgeRepo, templateRepo);
+  const knowledgeService = new KnowledgeService(llm, knowledgeRepo);
   const graphService = new GraphService();
   const clusteringService = new ClusteringService();
   const ragService = new RagService();
@@ -51,9 +49,6 @@ async function main() {
   // Register routes
   await app.register(async (instance) => {
     await knowledgeRoutes(instance, { repo: knowledgeRepo, service: knowledgeService, ragService });
-  });
-  await app.register(async (instance) => {
-    await templateRoutes(instance, { repo: templateRepo });
   });
   await app.register(async (instance) => {
     await agentRoutes(instance);

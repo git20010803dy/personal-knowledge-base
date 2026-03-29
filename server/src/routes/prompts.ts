@@ -283,15 +283,15 @@ function getBuiltInSystemPrompts() {
       key: 'review_extend',
       name: '延伸知识',
       category: 'review',
-      description: '复习时生成知识点的延伸背景知识（作者/时代/文化等）',
-      prompt: `你是一个知识库助手。用户正在学习一个知识点，希望了解更多背景信息。
+      description: '复习时从当前题目出发，延伸相关背景知识（作者/时代/文化等）',
+      prompt: `你是一个知识库助手。用户正在复习一道选择题，希望从这道题出发了解更多背景信息。
 
 知识点标题：{{itemTitle}}
-知识点内容：
+题目与答案：
 {{itemContent}}
 
 请围绕以下方面进行知识延伸：
-- 作者/创作者的背景与水平
+- 相关的作者/创作者背景与水平
 - 当时的历史时代状况
 - 相关的文化/社会背景
 - 与其他知识点的关联
@@ -299,8 +299,8 @@ function getBuiltInSystemPrompts() {
 请用 Markdown 格式组织内容，适合作为知识点保存。
 保持内容在 500 字以内，信息准确、有条理。`,
       variables: '["itemTitle","itemContent"]',
-      data_flow: '输入：知识点标题+内容 → LLM 生成延伸内容 → 前端展示 → 用户选择保存方式 → 写入 review_extensions 或 knowledge_items',
-      logic_flow: '1. 用户点击"延伸知识"按钮\n2. 前端发送知识点信息\n3. 后端拼装 prompt\n4. 调用 LLM 生成延伸内容\n5. 流式返回给前端\n6. 记录 token 消耗（call_type=review_extend）\n7. 用户选择保存：追加到当前知识点 / 新建知识点 / 不保存\n8. 保存时写入 review_extensions 表 + 更新或创建 knowledge_items',
+      data_flow: '输入：当前题目+选项+正确答案+解释 → LLM 生成延伸内容 → 前端展示 → 用户选择保存方式 → 写入 review_extensions 或 knowledge_items',
+      logic_flow: '1. 用户点击"延伸知识"按钮\n2. 前端发送题目信息\n3. 后端将题目+选项+答案+解释拼装为 itemContent\n4. 调用 LLM 生成延伸内容\n5. 流式返回给前端\n6. 记录 token 消耗（call_type=review_extend）\n7. 用户选择保存：追加到当前知识点 / 新建知识点 / 不保存\n8. 保存时写入 review_extensions 表 + 更新或创建 knowledge_items',
     },
     {
       key: 'agent_classify',

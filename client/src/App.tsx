@@ -3,7 +3,6 @@ import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import {
   BookOutlined,
   FormOutlined,
-  AppstoreOutlined,
   UnorderedListOutlined,
   SettingOutlined,
   NodeIndexOutlined,
@@ -15,7 +14,6 @@ import {
 import KnowledgeInput from "./pages/KnowledgeInput";
 import KnowledgeList from "./pages/KnowledgeList";
 import KnowledgeGraph from "./pages/KnowledgeGraph";
-import TemplateManagement from "./pages/TemplateManagement";
 import ProviderManagement from "./pages/ProviderManagement";
 import AgentChat from "./pages/AgentChat";
 import Review from "./pages/Review";
@@ -49,11 +47,6 @@ const menuItems = [
     key: "/review",
     icon: <ReadOutlined />,
     label: "复习",
-  },
-  {
-    key: "/templates",
-    icon: <AppstoreOutlined />,
-    label: "模板管理",
   },
   {
     key: "/prompts",
@@ -122,7 +115,6 @@ export default function App() {
               <Route path="/graph" element={<KnowledgeGraph />} />
               <Route path="/chat" element={<AgentChat />} />
               <Route path="/review" element={<Review />} />
-              <Route path="/templates" element={<TemplateManagement />} />
               <Route path="/prompts" element={<PromptManagement />} />
               <Route path="/providers" element={<ProviderManagement />} />
               <Route path="/tokens" element={<TokenUsage />} />
